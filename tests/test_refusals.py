@@ -1,0 +1,95 @@
+"""Every refusal in the README's scope table. Unsupported models raise UnsupportedError
+when they are loaded, unsupported inputs and options when predict is called. (Unsupported
+objectives and training modes are also part of the matrix in test_parity.py.)"""
+
+import lightgbm
+import numpy as np
+import pytest
+import scipy.sparse
+
+import fastleaves
+from cases import train
+
+UnsupportedError = fastleaves.UnsupportedError
+
+
+def trained(x, y, categorical_feature="auto", **params):
+    return lightgbm.train({"verbose": -1, **params}, lightgbm.Dataset(x, y, categorical_feature=categorical_feature), 5)
+
+
+def wide_model():
+    x = np.random.default_rng(0).normal(size=(500, 13))
+    return trained(x, x.sum(axis=1))
+
+
+def many_categories_model():
+    rng = np.random.default_rng(0)
+    x = rng.integers(0, 100, size=(20_000, 1)).astype(float)
+    y = rng.normal(size=100)[x[:, 0].astype(int)]  # an unrelated effect per category
+    params = {"min_data_per_group": 5, "cat_smooth": 1, "max_cat_threshold": 64, "num_leaves": 31}
+    return trained(x, y, categorical_feature=[0], **params)
+
+
+def many_thresholds_model():
+    x = np.random.default_rng(0).normal(size=(20_000, 1))
+    return trained(x, np.sin(20 * x[:, 0]), max_bin=1023, num_leaves=255, min_data_in_leaf=2)
+
+
+def old_version_model():
+    return train("regression", "numeric", "default").model_to_string().replace("version=v4", "version=v3")
+
+
+MODELS = {
+    "more than 12 features": wide_model,
+    "more than 32 categories on one feature": many_categories_model,
+    "more than 253 thresholds per feature": many_thresholds_model,
+    "multiclass": lambda: train("multiclass", "numeric", "default"),
+    "random forest mode": lambda: train("regression", "numeric", "random forest"),
+    "linear trees": lambda: train("regression", "numeric", "linear trees"),
+    "model file version 3": old_version_model,
+}
+
+
+@pytest.mark.parametrize("model", MODELS)
+def test_unsupported_model_fails_to_load(model):
+    model = MODELS[model]()
+    with pytest.raises(UnsupportedError):
+        if isinstance(model, str):
+            fastleaves.Booster(model_str=model)
+        else:
+            fastleaves.Booster.from_lightgbm(model)
+
+
+OUTPUTS = ["binary", "cross_entropy", "sqrt regression"]
+
+
+@pytest.mark.parametrize("objective", OUTPUTS)
+def test_unsupported_output_needs_raw_score(objective):
+    booster = fastleaves.Booster.from_lightgbm(train(objective, "numeric", "default"))
+    x = np.zeros((3, 6))
+    with pytest.raises(UnsupportedError):
+        booster.predict(x)
+    booster.predict(x, raw_score=True)
+
+
+def test_unsupported_option():
+    booster = fastleaves.Booster.from_lightgbm(train("regression", "numeric", "default"))
+    with pytest.raises(UnsupportedError):
+        booster.predict(np.zeros((3, 6)), pred_contrib=True)
+
+
+BAD_INPUTS = {
+    # input: error, as LightGBM raises (ValueError) or refused by fastleaves (UnsupportedError)
+    "sparse matrix": (scipy.sparse.csr_matrix(np.ones((3, 6))), UnsupportedError),
+    "1D array": (np.zeros(6), ValueError),
+    "too few columns": (np.zeros((3, 5)), ValueError),
+    "too many columns": (np.zeros((3, 7)), ValueError),
+}
+
+
+@pytest.mark.parametrize("data", BAD_INPUTS)
+def test_bad_input(data):
+    booster = fastleaves.Booster.from_lightgbm(train("regression", "numeric", "default"))
+    x, error = BAD_INPUTS[data]
+    with pytest.raises(error):
+        booster.predict(x)
