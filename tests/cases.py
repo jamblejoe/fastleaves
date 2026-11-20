@@ -136,14 +136,16 @@ def splits(model):
         tree = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
         if "split_feature" not in tree:
             continue
+        boundaries = [int(v) for v in tree.get("cat_boundaries", "").split()]
+        all_words = [int(w) for w in tree.get("cat_threshold", "").split()]
         for f, t, d in zip(*(tree[k].split() for k in ("split_feature", "threshold", "decision_type"))):
             default_left = bool(int(d) & 2)
             if int(d) & 1 == 0:  # numerical split
                 yield Split(int(f), float(t), None, default_left)
             else:  # categorical: the threshold indexes a bitset of the categories that go left
-                b = [int(v) for v in tree["cat_boundaries"].split()][int(t) : int(t) + 2]
-                words = [int(w) for w in tree["cat_threshold"].split()[b[0] : b[1]]]
-                cats = [32 * i + k for i, w in enumerate(words) for k in range(32) if w >> k & 1]
+                b = boundaries[int(t) : int(t) + 2]
+                words = all_words[b[0] : b[1]]
+                cats = [32 * i + k for i, w in enumerate(words) if w for k in range(32) if w >> k & 1]
                 yield Split(int(f), None, cats, default_left)
 
 
@@ -213,13 +215,18 @@ def input_rows(dataset, model):
 @functools.cache
 def _input_rows(dataset, model):
     x = features(np.random.default_rng(1), 1000, DATASETS[dataset])
+    return np.vstack([x, edge_rows(model, x[0])])
+
+
+def edge_rows(model, row):
+    """Copies of `row` with a single feature set to each edge value of that feature."""
     edges = []
     for f, values in enumerate(edge_values(model)):
         for v in values:
-            row = x[0].copy()
-            row[f] = v
-            edges.append(row)
-    return np.vstack([x, edges])
+            edge = np.array(row, dtype=float)
+            edge[f] = v
+            edges.append(edge)
+    return np.array(edges)
 
 
 def assert_bit_identical(actual, expected):
@@ -234,3 +241,51 @@ def assert_bit_identical(actual, expected):
             f"{len(differ)} of {actual.size} predictions differ; "
             f"first at {i}: fastleaves {actual[i]!r}, LightGBM {expected[i]!r}"
         )
+
+
+def model_file(n_features, trees, objective="regression"):
+    """A LightGBM model file with `n_features` columns and the given tree blocks."""
+    header = [
+        "tree", "version=v4", "num_class=1", "num_tree_per_iteration=1", "label_index=0",
+        f"max_feature_idx={n_features - 1}", f"objective={objective}",
+        "feature_names=" + " ".join(f"Column_{f}" for f in range(n_features)),
+        "feature_infos=" + " ".join(["none"] * n_features),
+    ]
+    return "\n\n".join(["\n".join(header), *trees, "end of trees"]) + "\n"
+
+
+def tree_block(splits):
+    """Tree 0 with numerical splits (feature, threshold, left child, right child); a child is
+    ~leaf or a later split. NaN is the missing value and goes right. Leaf i has the value i."""
+    n_leaves = len(splits) + 1
+    join = lambda values: " ".join(str(v) for v in values)
+    feature, threshold, left, right = zip(*splits)
+    return "\n".join([
+        "Tree=0", f"num_leaves={n_leaves}", "num_cat=0", f"split_feature={join(feature)}",
+        f"threshold={join(threshold)}", f"decision_type={join([8] * len(splits))}",  # 8: missing type NaN
+        f"left_child={join(left)}", f"right_child={join(right)}",
+        f"leaf_value={join(range(n_leaves))}", "is_linear=0", "shrinkage=1",
+    ])
+
+
+def chain_model(n_leaves):
+    """One feature, one tree: split i sends values <= i % 254 to leaf i and the others on to
+    split i + 1, so values above 253 and NaN pass all n_leaves - 1 splits."""
+    last = n_leaves - 2
+    splits = [(0, i % 254, ~i, i + 1 if i < last else ~(i + 1)) for i in range(last + 1)]
+    return model_file(1, [tree_block(splits)])
+
+
+def complete_model(depth):
+    """`depth` features, one tree: every split at level d compares feature d with 0.5, so the
+    tree has 2**depth leaves, all at depth `depth`, and the rows of 0s and 1s reach each one."""
+    first_leaf_level = 2 ** (depth - 1) - 1  # the first split whose children are leaves
+    splits = []
+    for k in range(2**depth - 1):
+        level = (k + 1).bit_length() - 1
+        if k < first_leaf_level:
+            splits.append((level, 0.5, 2 * k + 1, 2 * k + 2))
+        else:
+            j = k - first_leaf_level
+            splits.append((level, 0.5, ~(2 * j), ~(2 * j + 1)))
+    return model_file(depth, [tree_block(splits)])

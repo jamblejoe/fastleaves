@@ -6,6 +6,12 @@ All notable changes to fastleaves. The format follows
 
 ## [Unreleased]
 
+- Loading a model with a very deep tree (up to 32,767 levels, as LightGBM allows) no longer
+  crashes: model trees are read and freed with loops instead of recursion.
+- The README's scope table states two existing refusals: trees with more than 32,768 leaves,
+  and features whose splits mix kinds or missing-value modes (from continued training on
+  different data).
+
 ## [0.4.0] - 2026-11-20
 
 - Numerical features may have up to 254 thresholds in the model's splits (was 253), so
