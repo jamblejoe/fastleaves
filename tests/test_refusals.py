@@ -45,6 +45,25 @@ def many_leaves_model():
     return text
 
 
+def continued_model(change):
+    """A model trained further (init_model) on data with one change, as LightGBM allows: then
+    the splits on one feature differ in missing type (None and NaN, None and Zero) or in kind
+    (numerical and categorical)."""
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(2000, 2))
+    first = lightgbm.train({"verbose": -1}, lightgbm.Dataset(x, x[:, 0] + np.sin(3 * x[:, 1])), 10)
+    params, categorical = {"verbose": -1}, "auto"
+    if change == "NaN":
+        x[rng.random(2000) < 0.2, 0] = np.nan
+    elif change == "Zero":
+        x[rng.random(2000) < 0.2, 0] = 0.0
+        params["zero_as_missing"] = True
+    elif change == "categorical":
+        x[:, 1], categorical = rng.integers(0, 10, 2000), [1]
+    y = x[:, 0] + np.sin(3 * x[:, 1])
+    return lightgbm.train(params, lightgbm.Dataset(x, y, categorical_feature=categorical), 10, init_model=first)
+
+
 def old_version_model():
     return train("regression", "numeric", "default").model_to_string().replace("version=v4", "version=v3")
 
@@ -54,6 +73,9 @@ MODELS = {
     "more than 255 categories on one feature": many_categories_model,
     "more than 254 thresholds per feature": many_thresholds_model,
     "more than 32,768 leaves in a tree": many_leaves_model,
+    "missing types None and NaN on one feature": lambda: continued_model("NaN"),
+    "missing types None and Zero on one feature": lambda: continued_model("Zero"),
+    "numerical and categorical splits on one feature": lambda: continued_model("categorical"),
     "multiclass": lambda: train("multiclass", "numeric", "default"),
     "random forest mode": lambda: train("regression", "numeric", "random forest"),
     "linear trees": lambda: train("regression", "numeric", "linear trees"),
