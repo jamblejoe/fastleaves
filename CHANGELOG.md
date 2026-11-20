@@ -6,6 +6,8 @@ All notable changes to fastleaves. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-20
+
 - Models may use up to 256 features in their splits (was 12 features in total). Features
   the model never splits on are not read and do not count toward the limit.
 
