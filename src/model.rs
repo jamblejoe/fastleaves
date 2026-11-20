@@ -296,9 +296,9 @@ shrinkage=1";
             ("random forest", model(&[TREE]).replace("tree_sizes", "average_output\ntree_sizes")),
             ("linear tree", model(&[&set(TREE, "is_linear", Some("1"))])),
             (
-                "33 categories on one feature",
-                model(&[&set(TREE, "cat_threshold", Some("4294967295 1"))
-                    .replace("cat_boundaries=0 1", "cat_boundaries=0 2")]),
+                "256 categories on one feature",
+                model(&[&set(TREE, "cat_threshold", Some(&["4294967295"; 8].join(" ")))
+                    .replace("cat_boundaries=0 1", "cat_boundaries=0 8")]),
             ),
         ];
         for (what, text) in cases {

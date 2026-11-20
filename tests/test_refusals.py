@@ -8,7 +8,7 @@ import pytest
 import scipy.sparse
 
 import fastleaves
-from cases import train
+from cases import split_categories, train
 
 UnsupportedError = fastleaves.UnsupportedError
 
@@ -27,10 +27,12 @@ def wide_model():
 
 def many_categories_model():
     rng = np.random.default_rng(0)
-    x = rng.integers(0, 100, size=(20_000, 1)).astype(float)
-    y = rng.normal(size=100)[x[:, 0].astype(int)]  # an unrelated effect per category
-    params = {"min_data_per_group": 5, "cat_smooth": 1, "max_cat_threshold": 64, "num_leaves": 31}
-    return trained(x, y, categorical_feature=[0], **params)
+    x = rng.integers(0, 257, size=(50_000, 1)).astype(float)
+    y = rng.normal(size=257)[x[:, 0].astype(int)]  # an unrelated effect per category
+    params = {"min_data_per_group": 5, "cat_smooth": 1, "max_cat_threshold": 128, "num_leaves": 31, "max_bin": 1023}
+    model = trained(x, y, categorical_feature=[0], **params)
+    assert len(split_categories(model, 0)) == 256  # one more than supported
+    return model
 
 
 def many_thresholds_model():
@@ -44,7 +46,7 @@ def old_version_model():
 
 MODELS = {
     "more than 256 features used in splits": wide_model,
-    "more than 32 categories on one feature": many_categories_model,
+    "more than 255 categories on one feature": many_categories_model,
     "more than 253 thresholds per feature": many_thresholds_model,
     "multiclass": lambda: train("multiclass", "numeric", "default"),
     "random forest mode": lambda: train("regression", "numeric", "random forest"),

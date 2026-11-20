@@ -6,6 +6,10 @@ All notable changes to fastleaves. The format follows
 
 ## [Unreleased]
 
+- Categorical features may have up to 255 categories in the model's splits (was 32).
+  Features with up to 32 keep the previous fast path; larger category sets take one more
+  memory lookup per split.
+
 ## [0.2.0] - 2026-11-20
 
 - Models may use up to 256 features in their splits (was 12 features in total). Features
