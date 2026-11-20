@@ -87,6 +87,25 @@ impl Node {
     }
 }
 
+/// Frees a tree with a loop instead of recursion, so a chain 32,767 nodes deep fits on the stack:
+/// each node's children are moved to `stack` (a leaf left in their place) before it is freed.
+impl Drop for Node {
+    fn drop(&mut self) {
+        let mut stack = vec![];
+        let detach = |n: &mut Node, stack: &mut Vec<Box<Node>>| {
+            if let Node::Num { left, right, .. } | Node::Cat { left, right, .. } = n {
+                for child in [left, right] {
+                    stack.push(std::mem::replace(child, Box::new(Node::Leaf { value: 0.0, index: 0 })));
+                }
+            }
+        };
+        detach(self, &mut stack);
+        while let Some(mut n) = stack.pop() {
+            detach(&mut n, &mut stack);
+        }
+    }
+}
+
 #[derive(Clone)]
 enum Feature {
     Unused,

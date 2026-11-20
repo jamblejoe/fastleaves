@@ -31,7 +31,7 @@ fast kernel is not used.
 | `test_parity.py` | The parity matrix: objective × dataset × training × predict options. |
 | `test_inputs.py` | Input forms (dtypes, layouts, lists, DataFrames, pandas categories), 255 categories on one feature (every category and unseen ones), 254 thresholds on one feature next to 255 categories (each missing-value mode, every threshold and its neighbors), batch sizes (also with 100 features), models with many unused features, thread counts (also with `pred_leaf`), model files, early stopping, `validate_features`, generated rows (hypothesis). |
 | `test_refusals.py` | One test for each refusal in the scope table. |
-| `test_random_models.py` | 200 model files with random trees, written directly instead of trained (see below). |
+| `test_random_models.py` | 200 model files with random trees, written directly instead of trained (see below); the largest tree (32,768 leaves, also as a chain 32,767 levels deep, loaded on a 256 KB stack). |
 | `cases.py` | The datasets, objectives, training settings, random model files and test rows the tests share. |
 
 ## The parity matrix

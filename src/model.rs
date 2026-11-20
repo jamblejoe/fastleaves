@@ -117,7 +117,7 @@ fn parse_tree(block: &str) -> Result<Node, Error> {
         cat_boundaries,
         cat_threshold,
     };
-    t.node(0)
+    t.root()
 }
 
 struct Tree {
@@ -132,20 +132,30 @@ struct Tree {
 }
 
 impl Tree {
-    /// Node `i` and its subtree; children of `i` are leaves (`~leaf`) or later nodes.
-    fn node(&self, i: i32) -> Result<Node, Error> {
-        if i < 0 {
-            let v = self.leaf_value.get(!i as usize);
-            return v
-                .map(|&value| Node::Leaf { value, index: !i as u32 })
-                .ok_or_else(|| invalid(format!("no leaf {}", !i)));
+    /// The tree from its root. Children are leaves (`~leaf`) or later nodes, so building the
+    /// nodes from last to first builds each node's children before it. A loop, not recursion:
+    /// a tree may be a chain 32,767 nodes deep.
+    fn root(&self) -> Result<Node, Error> {
+        let mut built: Vec<Option<Node>> = self.left_child.iter().map(|_| None).collect();
+        for i in (0..built.len()).rev() {
+            let mut child = |c: i32| {
+                let node = if c < 0 {
+                    self.leaf_value.get(!c as usize).map(|&value| Node::Leaf { value, index: !c as u32 })
+                } else if c as usize > i {
+                    built.get_mut(c as usize).and_then(Option::take) // None if it has a parent already
+                } else {
+                    None
+                };
+                node.map(Box::new).ok_or_else(|| invalid(format!("node {i} has child {c}")))
+            };
+            let (left, right) = (child(self.left_child[i])?, child(self.right_child[i])?);
+            built[i] = Some(self.split(i, left, right)?);
         }
-        let u = i as usize;
-        let child = |c: i32| {
-            let later_node = i < c && (c as usize) < self.left_child.len();
-            if c >= 0 && !later_node { Err(invalid(format!("node {i} has child {c}"))) } else { self.node(c) }
-        };
-        let (left, right) = (Box::new(child(self.left_child[u])?), Box::new(child(self.right_child[u])?));
+        Ok(built[0].take().unwrap())
+    }
+
+    /// Split `u` with its children.
+    fn split(&self, u: usize, left: Box<Node>, right: Box<Node>) -> Result<Node, Error> {
         let (feature, d) = (self.split_feature[u], self.decision_type[u]);
         if d & 1 == 0 {
             let missing = match (d >> 2) & 3 {
@@ -272,9 +282,9 @@ shrinkage=1";
     #[test]
     fn decodes_category_sets_over_several_words() {
         let tree = set(&set(TREE, "cat_boundaries", Some("0 3")), "cat_threshold", Some("2 0 1"));
-        let Node::Num { left, .. } = parse_tree(&tree).unwrap() else { panic!() };
-        let Node::Cat { cats, .. } = *left else { panic!() };
-        assert_eq!(cats, [1, 64]);
+        let Node::Num { left, .. } = &parse_tree(&tree).unwrap() else { panic!() };
+        let Node::Cat { cats, .. } = &**left else { panic!() };
+        assert_eq!(cats, &[1, 64]);
     }
 
     #[test]
@@ -325,6 +335,7 @@ shrinkage=1";
             ("child loops back", tree("left_child", Some("0 -1"))),
             ("child out of range", tree("left_child", Some("5 -1"))),
             ("leaf out of range", tree("right_child", Some("-9 -2"))),
+            ("both children are node 1", tree("right_child", Some("1 -2"))),
             ("unknown missing type", tree("decision_type", Some("14 1"))),
             ("category set out of range", tree("threshold", Some("0.5 4"))),
             ("feature out of range", tree("split_feature", Some("0 7"))),

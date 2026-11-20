@@ -261,20 +261,26 @@ def random_model(seed):
     for t in range(rng.integers(1, 60)):
         n_leaves = 1 if rng.random() < 0.1 else int(2 ** rng.uniform(1, 10))
         trees.append(random_tree(rng, t, n_leaves, kind, missing, pool))
+    return random_model_file(n_features, trees, rng.choice(["regression", "poisson"]))
+
+
+def random_model_file(n_features, trees, objective="regression"):
+    """A model file with `n_features` columns and the given tree blocks (see random_tree)."""
     header = [
         "tree", "version=v4", "num_class=1", "num_tree_per_iteration=1", "label_index=0",
-        f"max_feature_idx={n_features - 1}", f"objective={rng.choice(['regression', 'poisson'])}",
+        f"max_feature_idx={n_features - 1}", f"objective={objective}",
         "feature_names=" + " ".join(f"Column_{f}" for f in range(n_features)),
         "feature_infos=" + " ".join(["none"] * n_features),
     ]
     return "\n\n".join(["\n".join(header), *trees, "end of trees"]) + "\n"
 
 
-def random_tree(rng, number, n_leaves, kind, missing, pool):
+def random_tree(rng, number, n_leaves, kind, missing, pool, chain=None):
     """Tree `number` of random_model, grown as LightGBM grows trees: each split turns a leaf
-    into a node whose left child is that leaf and whose right child is a new leaf. Some trees
-    split mostly their newest leaf, so their leaves lie at very different depths."""
-    chain = rng.random()
+    into a node whose left child is that leaf and whose right child is a new leaf. `chain` is
+    the share of splits of the newest leaf (random if None): near 1, leaves lie at very
+    different depths; at 1 the tree is a chain as deep as it has splits."""
+    chain = rng.random() if chain is None else chain
     child = [[], []]  # the left and right child of each node: ~leaf or a later node
     parent = {0: None}  # leaf: (node, side) that points to it
     features, thresholds, types, cat_sets = [], [], [], []
