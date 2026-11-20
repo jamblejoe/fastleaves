@@ -8,7 +8,7 @@ import pytest
 import scipy.sparse
 
 import fastleaves
-from cases import split_categories, train
+from cases import split_categories, split_thresholds, thresholds_model, train
 
 UnsupportedError = fastleaves.UnsupportedError
 
@@ -36,8 +36,9 @@ def many_categories_model():
 
 
 def many_thresholds_model():
-    x = np.random.default_rng(0).normal(size=(20_000, 1))
-    return trained(x, np.sin(20 * x[:, 0]), max_bin=1023, num_leaves=255, min_data_in_leaf=2)
+    model = thresholds_model("None", 255)
+    assert len(split_thresholds(model, 0)) == 255  # one more than supported
+    return model
 
 
 def old_version_model():
@@ -47,7 +48,7 @@ def old_version_model():
 MODELS = {
     "more than 256 features used in splits": wide_model,
     "more than 255 categories on one feature": many_categories_model,
-    "more than 253 thresholds per feature": many_thresholds_model,
+    "more than 254 thresholds per feature": many_thresholds_model,
     "multiclass": lambda: train("multiclass", "numeric", "default"),
     "random forest mode": lambda: train("regression", "numeric", "random forest"),
     "linear trees": lambda: train("regression", "numeric", "linear trees"),

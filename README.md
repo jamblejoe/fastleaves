@@ -30,7 +30,7 @@ small batches work but are not optimized.
 |---|---|---|
 | Model files | LightGBM 4.x | older versions |
 | Splits | numerical; categorical with up to 255 distinct categories per feature (any category IDs) | more than 255 categories on one feature |
-| Size | up to 256 features used in splits (any number of input columns), 253 thresholds per feature | larger models |
+| Size | up to 256 features used in splits (any number of input columns), 254 thresholds per feature (enough for LightGBM's default `max_bin=255`) | larger models |
 | Missing values | all modes (`None`, `NaN`, `Zero`) | |
 | Output | `regression`, `regression_l1`, `huber`, `fair`, `quantile`, `mape`, `poisson`, `gamma`, `tweedie`; any single-output objective with `raw_score=True` | `binary`/`cross_entropy` probabilities, `sqrt` regression, random-forest mode, multiclass, linear trees |
 | Input | 2D numpy (float64, float32, integer); pandas DataFrame incl. categorical columns | sparse matrices, 1D input |
