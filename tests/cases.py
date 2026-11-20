@@ -30,12 +30,14 @@ OBJECTIVES = {
 
 @dataclass(frozen=True)
 class Data:
-    """Six features: 0-3 numerical, 4-5 integers (categorical if listed in `categorical`)."""
+    """Six features: 0-3 numerical, 4-5 integers (categorical if listed in `categorical`),
+    then `extra` numerical features, every tenth of them constant."""
 
     nan: float = 0.0  # share of NaN values
     zeros: float = 0.0  # share of exact zeros
     categorical: tuple = ()
     category_step: int = 1  # feature 5 takes the values 0, step, 2 * step, ...
+    extra: int = 0  # more numerical features
     params: dict = field(default_factory=dict)  # LightGBM parameters this data needs
 
 
@@ -46,6 +48,7 @@ DATASETS = {
     "zero as missing": Data(zeros=0.2, params={"zero_as_missing": True}),
     "categorical": Data(nan=0.05, categorical=(4, 5)),
     "large category IDs": Data(nan=0.05, categorical=(4, 5), category_step=1000),
+    "100 features": Data(nan=0.05, categorical=(4, 5), extra=94),
 }
 
 TRAINING = {
@@ -70,6 +73,7 @@ def features(rng, n, data):
             rng.exponential(size=n).round(1),
             rng.integers(0, 10, n),
             rng.integers(0, 30, n),
+            *(np.full(n, 1.0) if i % 10 == 0 else rng.normal(size=n).round(1) for i in range(data.extra)),
         ]
     ).astype(float)
     x[:, 5] *= data.category_step
@@ -81,6 +85,7 @@ def features(rng, n, data):
 def labels(rng, x, kind, data):
     x = np.nan_to_num(x)
     score = 0.5 * x[:, 0] - 0.3 * x[:, 1] + np.sin(3 * x[:, 2]) + 0.1 * x[:, 4] - 0.02 * x[:, 5] / data.category_step
+    score += 0.3 * x[:, 6:].sum(axis=1)
     score += rng.normal(scale=0.3, size=len(x))
     return {
         "real": lambda: score,

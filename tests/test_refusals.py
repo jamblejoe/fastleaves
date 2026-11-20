@@ -18,8 +18,11 @@ def trained(x, y, categorical_feature="auto", **params):
 
 
 def wide_model():
-    x = np.random.default_rng(0).normal(size=(500, 13))
-    return trained(x, x.sum(axis=1))
+    x = np.random.default_rng(0).normal(size=(2000, 300))
+    params = {"verbose": -1, "num_leaves": 63, "min_data_in_leaf": 5}
+    model = lightgbm.train(params, lightgbm.Dataset(x, x.sum(axis=1)), 15)
+    assert (model.feature_importance() > 0).sum() > 256
+    return model
 
 
 def many_categories_model():
@@ -40,7 +43,7 @@ def old_version_model():
 
 
 MODELS = {
-    "more than 12 features": wide_model,
+    "more than 256 features used in splits": wide_model,
     "more than 32 categories on one feature": many_categories_model,
     "more than 253 thresholds per feature": many_thresholds_model,
     "multiclass": lambda: train("multiclass", "numeric", "default"),

@@ -1,14 +1,19 @@
 //! Packed forest, input binning and the scalar kernel.
 //!
-//! Each input value is binned once per row to a byte, with LightGBM's rules:
+//! Each input value of a column the model splits on is binned once to a byte, with LightGBM's rules:
 //! - numerical: the number of the feature's thresholds below the value, so the split
 //!   `x <= T[k]` is exactly `bin <= k`; or `MISSING`, which goes to the split's default side;
 //! - categorical: the position of the category among the feature's categories (those in
 //!   any of its splits' sets), or `NO_CAT` (goes right) if it is none of them.
 //!
-//! Each node is one `u64`. Low half: feature (bits 0..4), threshold bin (4..12), index of
-//! the first child (12..28), flags `CAT`, `LEAF`, `DEFAULT_LEFT`. High half: bitset of the
-//! category positions that go left, or LightGBM's index of a leaf. Children are adjacent, so the next node is `first + go_right`.
+//! The columns the model splits on get slots 0, 1, ... in column order; columns it never
+//! splits on are not read. Bins are stored per block of `BLOCK` rows, slot by slot: the bin of
+//! slot `s` and row `r` is at `s * BLOCK + r`, so a tree reads only the slots it splits on.
+//!
+//! Each node is one `u64`. Low half: slot (bits 0..8), index of the first child (8..24), flags
+//! `CAT`, `LEAF`, `DEFAULT_LEFT`. High half: the threshold bin of a numerical split, the bitset
+//! of the category positions that go left, or LightGBM's index of a leaf. Children are
+//! adjacent, so the next node is `first + go_right`.
 
 use crate::Error;
 use crate::avx512::Avx512;
@@ -16,16 +21,16 @@ use rayon::prelude::*;
 use std::collections::VecDeque;
 use std::ops::Range;
 
-pub const MAX_FEATURES: usize = 12;
+pub const MAX_FEATURES: usize = 256; // columns used in splits
 pub const MAX_THRESHOLDS: usize = 253;
 pub const MAX_CATEGORIES: usize = 32; // per feature
-pub(crate) const ROW: usize = 16; // bytes per binned row
 pub(crate) const CAT: u32 = 1 << 28;
 pub(crate) const LEAF: u32 = 1 << 29;
 pub(crate) const DEFAULT_LEFT: u32 = 1 << 30;
 pub(crate) const MISSING: u8 = 254;
 const NO_CAT: u8 = 255;
-const BLOCK: usize = 4096; // rows per block
+pub(crate) const BLOCK: usize = 1 << BLOCK_BITS; // rows per block
+pub(crate) const BLOCK_BITS: u32 = 12;
 const ZERO: f64 = 1e-35f32 as f64; // LightGBM reads inputs within ±ZERO as 0
 
 /// Which numerical values count as missing (LightGBM's `MissingType`).
@@ -75,7 +80,9 @@ enum Feature {
 }
 
 pub struct Forest {
-    features: Vec<Feature>,
+    n_columns: usize,
+    columns: Vec<usize>,    // the column of each slot
+    features: Vec<Feature>, // of each slot
     roots: Vec<usize>,
     nodes: Vec<u64>,
     leaves: Vec<f64>, // value of each leaf node, 0 for splits
@@ -83,9 +90,6 @@ pub struct Forest {
 
 impl Forest {
     pub fn new(n_features: usize, trees: &[Node]) -> Result<Self, Error> {
-        if n_features > MAX_FEATURES {
-            return Err(Error::unsupported(format!("{n_features} features, at most {MAX_FEATURES}")));
-        }
         let mut features = vec![Feature::Unused; n_features];
         let mut stack: Vec<&Node> = trees.iter().collect();
         while let Some(n) = stack.pop() {
@@ -140,8 +144,15 @@ impl Forest {
                 Feature::Unused => {}
             }
         }
-
-        let mut forest = Forest { features, roots: vec![], nodes: vec![], leaves: vec![] };
+        let columns: Vec<usize> =
+            (0..n_features).filter(|&f| !matches!(features[f], Feature::Unused)).collect();
+        if columns.len() > MAX_FEATURES {
+            let n = columns.len();
+            return Err(Error::unsupported(format!("{n} features used in splits, at most {MAX_FEATURES}")));
+        }
+        let features = columns.iter().map(|&f| features[f].clone()).collect();
+        let mut forest =
+            Forest { n_columns: n_features, columns, features, roots: vec![], nodes: vec![], leaves: vec![] };
         for tree in trees {
             forest.pack(tree)?;
         }
@@ -149,7 +160,7 @@ impl Forest {
     }
 
     pub fn n_features(&self) -> usize {
-        self.features.len()
+        self.n_columns
     }
 
     pub fn n_trees(&self) -> usize {
@@ -169,15 +180,17 @@ impl Forest {
                     self.leaves[i] = *value;
                     (LEAF, *index)
                 }
-                Node::Num { feature: f, threshold, default_left, .. } => {
-                    let Feature::Num { thresholds, .. } = &self.features[*f] else { unreachable!() };
+                Node::Num { feature, threshold, default_left, .. } => {
+                    let s = self.columns.binary_search(feature).unwrap();
+                    let Feature::Num { thresholds, .. } = &self.features[s] else { unreachable!() };
                     let k = thresholds.partition_point(|t| t < threshold) as u32;
-                    (*f as u32 | k << 4 | if *default_left { DEFAULT_LEFT } else { 0 }, 0)
+                    (s as u32 | if *default_left { DEFAULT_LEFT } else { 0 }, k)
                 }
-                Node::Cat { feature: f, cats, .. } => {
-                    let Feature::Cat(all) = &self.features[*f] else { unreachable!() };
+                Node::Cat { feature, cats, .. } => {
+                    let s = self.columns.binary_search(feature).unwrap();
+                    let Feature::Cat(all) = &self.features[s] else { unreachable!() };
                     let set = cats.iter().fold(0u32, |m, c| m | 1 << all.binary_search(c).unwrap());
-                    (*f as u32 | CAT, set)
+                    (s as u32 | CAT, set)
                 }
             };
             if let Some((_, l, r)) = n.split() {
@@ -185,7 +198,7 @@ impl Forest {
                 if first + 1 > 0xFFFF {
                     return Err(Error::unsupported("trees with more than 65535 nodes".into()));
                 }
-                lo |= (first as u32) << 12;
+                lo |= (first as u32) << 8;
                 self.nodes.extend([0, 0]);
                 self.leaves.extend([0.0, 0.0]);
                 queue.extend([(l, root + first), (r, root + first + 1)]);
@@ -195,27 +208,16 @@ impl Forest {
         Ok(())
     }
 
-    fn bin_row(&self, x: &[f64], out: &mut [u8]) {
-        for (feature, (&v, o)) in self.features.iter().zip(x.iter().zip(out)) {
-            let v = if v.abs() <= ZERO { 0.0 } else { v };
-            *o = match feature {
-                Feature::Unused => 0,
-                // as LightGBM: truncate to int; NaN, negative and out of int range go right
-                Feature::Cat(cats) if v > -1.0 && v < 2147483648.0 => {
-                    cats.binary_search(&(v as u32)).map_or(NO_CAT, |k| k as u8)
-                }
-                Feature::Cat(_) => NO_CAT,
-                Feature::Num { thresholds, missing } => {
-                    let is_missing = match missing {
-                        Missing::None => false,
-                        Missing::Zero => v.is_nan() || v == 0.0,
-                        Missing::NaN => v.is_nan(),
-                    };
-                    let v = if v.is_nan() { 0.0 } else { v };
-                    if is_missing { MISSING } else { thresholds.partition_point(|&t| t < v) as u8 }
-                }
-            };
+    /// The bins of the rows of `x` (at most `BLOCK`), slot by slot; 3 bytes of padding at the
+    /// end, as SIMD reads 4 bytes.
+    fn bin_block(&self, x: &[f64]) -> Vec<u8> {
+        let mut bins = vec![0u8; self.features.len() * BLOCK + 3];
+        for (r, row) in x.chunks(self.n_columns.max(1)).enumerate() {
+            for (s, (feature, &c)) in self.features.iter().zip(&self.columns).enumerate() {
+                bins[s * BLOCK + r] = bin(feature, row[c]);
+            }
         }
+        bins
     }
 
     /// Raw score of each row of the row-major matrix `x`: the sum of the leaf values of
@@ -253,7 +255,7 @@ impl Forest {
         trees: Range<usize>,
         f: impl Fn(&mut [T], usize, usize, &[u32]) + Sync,
     ) {
-        let nf = self.n_features();
+        let nf = self.n_columns;
         assert_eq!(
             x.len() * width,
             out.len() * nf,
@@ -262,10 +264,7 @@ impl Forest {
         let simd = Avx512::detect();
         out.par_chunks_mut(BLOCK * width).zip(x.par_chunks(BLOCK * nf.max(1))).for_each(|(out, x)| {
             let n = out.len() / width;
-            let mut bins = vec![0u8; (n + 1) * ROW]; // +1 row: SIMD reads 4 bytes
-            for (row, b) in x.chunks(nf).zip(bins.chunks_mut(ROW)) {
-                self.bin_row(row, b);
-            }
+            let bins = self.bin_block(x);
             let mut leaf_of = vec![0u32; n];
             for (k, &root) in self.roots[trees.clone()].iter().enumerate() {
                 let tree = &self.nodes[root..];
@@ -274,8 +273,8 @@ impl Forest {
                 } else if let Some(s) = simd {
                     s.leaves(tree, &bins, &mut leaf_of);
                 } else {
-                    for (l, row) in leaf_of.iter_mut().zip(bins.chunks(ROW)) {
-                        *l = leaf_scalar(tree, row);
+                    for (r, l) in leaf_of.iter_mut().enumerate() {
+                        *l = leaf_scalar(tree, &bins, r);
                     }
                 }
                 f(out, k, root, &leaf_of);
@@ -284,22 +283,45 @@ impl Forest {
     }
 }
 
-fn leaf_scalar(tree: &[u64], row: &[u8]) -> u32 {
+/// The bin of `v` for `feature`.
+fn bin(feature: &Feature, v: f64) -> u8 {
+    let v = if v.abs() <= ZERO { 0.0 } else { v };
+    match feature {
+        Feature::Unused => unreachable!(),
+        // as LightGBM: truncate to int; NaN, negative and out of int range go right
+        Feature::Cat(cats) if v > -1.0 && v < 2147483648.0 => {
+            cats.binary_search(&(v as u32)).map_or(NO_CAT, |k| k as u8)
+        }
+        Feature::Cat(_) => NO_CAT,
+        Feature::Num { thresholds, missing } => {
+            let is_missing = match missing {
+                Missing::None => false,
+                Missing::Zero => v.is_nan() || v == 0.0,
+                Missing::NaN => v.is_nan(),
+            };
+            let v = if v.is_nan() { 0.0 } else { v };
+            if is_missing { MISSING } else { thresholds.partition_point(|&t| t < v) as u8 }
+        }
+    }
+}
+
+/// The node (counted from the root of `tree`) of the leaf that row `r` of the binned block reaches.
+fn leaf_scalar(tree: &[u64], bins: &[u8], r: usize) -> u32 {
     let mut n = 0;
     loop {
-        let lo = tree[n] as u32;
+        let (lo, hi) = (tree[n] as u32, (tree[n] >> 32) as u32);
         if lo & LEAF != 0 {
             return n as u32;
         }
-        let d = row[(lo & 0xF) as usize];
+        let d = bins[(lo & 0xFF) as usize * BLOCK + r];
         let left = if lo & CAT != 0 {
-            ((tree[n] >> 32) as u32).checked_shr(d as u32).is_some_and(|m| m & 1 == 1)
+            hi.checked_shr(d as u32).is_some_and(|m| m & 1 == 1)
         } else if d == MISSING {
             lo & DEFAULT_LEFT != 0
         } else {
-            d as u32 <= (lo >> 4) & 0xFF
+            d as u32 <= hi
         };
-        n = ((lo >> 12) & 0xFFFF) as usize + !left as usize;
+        n = ((lo >> 8) & 0xFFFF) as usize + !left as usize;
     }
 }
 
@@ -348,10 +370,10 @@ mod tests {
         }
     }
 
-    /// Feature kinds: categorical, or numerical with one missing-value type.
-    fn kinds(rng: &mut Rng) -> Vec<Option<Missing>> {
+    /// Feature kinds of `n` columns: categorical, or numerical with one missing-value type.
+    fn kinds(rng: &mut Rng, n: usize) -> Vec<Option<Missing>> {
         let all = [None, Some(Missing::None), Some(Missing::Zero), Some(Missing::NaN)];
-        (0..MAX_FEATURES).map(|_| all[rng.next(4) as usize]).collect()
+        (0..n).map(|_| all[rng.next(4) as usize]).collect()
     }
 
     /// The categories of a categorical feature: small ones and some far apart.
@@ -366,12 +388,14 @@ mod tests {
         c
     };
 
-    fn tree(rng: &mut Rng, depth: u32, kinds: &[Option<Missing>]) -> Node {
+    /// A random tree that splits on the columns `used`.
+    fn tree(rng: &mut Rng, depth: u32, kinds: &[Option<Missing>], used: &[usize]) -> Node {
         if depth == 0 || rng.next(5) == 0 {
             return Node::Leaf { value: rng.value().clamp(-5.0, 5.0) / 3.0, index: rng.next(1000) as u32 };
         }
-        let feature = rng.next(MAX_FEATURES as u64) as usize;
-        let (left, right) = (Box::new(tree(rng, depth - 1, kinds)), Box::new(tree(rng, depth - 1, kinds)));
+        let feature = used[rng.next(used.len() as u64) as usize];
+        let (left, right) =
+            (Box::new(tree(rng, depth - 1, kinds, used)), Box::new(tree(rng, depth - 1, kinds, used)));
         match kinds[feature] {
             None => {
                 let cats = CATS.into_iter().filter(|_| rng.next(2) == 0).collect();
@@ -423,38 +447,42 @@ mod tests {
             assert!(Avx512::detect().is_some(), "FASTLEAVES_REQUIRE_AVX512 is set but AVX-512 is not used");
         }
         let mut rng = Rng(0x9E3779B97F4A7C15);
-        for _ in 0..30 {
-            let kinds = kinds(&mut rng);
-            let trees: Vec<Node> = (0..30).map(|_| tree(&mut rng, 12, &kinds)).collect();
-            let forest = Forest::new(MAX_FEATURES, &trees).unwrap();
+        for i in 0..30 {
+            // 1 to 320 columns; a third of them unused, the last ones only if they fit the slots
+            let nf = [1, 12, 17, 200, 320][i % 5];
+            let kinds = kinds(&mut rng, nf);
+            let mut used: Vec<usize> = (0..nf).filter(|_| rng.next(3) != 0).take(MAX_FEATURES).collect();
+            used.push(nf - 1);
+            used.dedup();
+            used.truncate(MAX_FEATURES);
+            let trees: Vec<Node> = (0..30).map(|_| tree(&mut rng, 12, &kinds, &used)).collect();
+            let forest = Forest::new(nf, &trees).unwrap();
             for n in [0, 1, 15, 16, 17, 100, BLOCK + 5] {
-                let x: Vec<f64> = (0..n * MAX_FEATURES).map(|_| rng.value()).collect();
+                let x: Vec<f64> = (0..n * nf).map(|_| rng.value()).collect();
                 let mut out = vec![f64::NAN; n];
                 forest.predict_raw(&x, &mut out, 3..trees.len());
-                for (row, &got) in x.chunks(MAX_FEATURES).zip(&out) {
+                for (row, &got) in x.chunks(nf).zip(&out) {
                     let want = trees[3..].iter().fold(0.0, |s, t| s + eval(t, row).0);
                     assert_eq!(got.to_bits(), want.to_bits());
                 }
                 let mut leaf = vec![-1; n * 7];
                 forest.predict_leaf(&x, &mut leaf, 5..12);
-                for (row, got) in x.chunks(MAX_FEATURES).zip(leaf.chunks(7)) {
+                for (row, got) in x.chunks(nf).zip(leaf.chunks(7)) {
                     let want: Vec<i32> = trees[5..12].iter().map(|t| eval(t, row).1 as i32).collect();
                     assert_eq!(got, want);
                 }
                 // both kernels pick the same leaves
                 let Some(simd) = Avx512::detect() else { continue };
-                let mut bins = vec![0u8; (n + 1) * ROW];
-                for (row, b) in x.chunks(MAX_FEATURES).zip(bins.chunks_mut(ROW)) {
-                    forest.bin_row(row, b);
-                }
+                let rows = n.min(BLOCK);
+                let bins = forest.bin_block(&x[..rows * nf]);
                 for &root in &forest.roots {
                     let tree = &forest.nodes[root..];
                     if tree[0] as u32 & LEAF != 0 {
                         continue;
                     }
-                    let mut got = vec![0; n];
+                    let mut got = vec![0; rows];
                     simd.leaves(tree, &bins, &mut got);
-                    let want: Vec<u32> = bins.chunks(ROW).take(n).map(|r| leaf_scalar(tree, r)).collect();
+                    let want: Vec<u32> = (0..rows).map(|r| leaf_scalar(tree, &bins, r)).collect();
                     assert_eq!(got, want);
                 }
             }
@@ -473,7 +501,10 @@ mod tests {
             right: leaf(),
         };
         let cat = |feature, cats| Node::Cat { feature, cats, left: leaf(), right: leaf() };
-        assert!(Forest::new(MAX_FEATURES + 1, &[]).is_err());
+        assert!(Forest::new(1000, &[num(999, 0.0, Missing::None)]).is_ok()); // unused columns are free
+        let wide: Vec<Node> = (0..=MAX_FEATURES).map(|f| num(f, 0.0, Missing::None)).collect();
+        assert!(Forest::new(MAX_FEATURES + 1, &wide).is_err());
+        assert!(Forest::new(MAX_FEATURES + 1, &wide[1..]).is_ok());
         assert!(Forest::new(2, &[num(2, 0.0, Missing::None)]).is_err());
         assert!(Forest::new(2, &[num(0, 0.0, Missing::None), cat(0, vec![1])]).is_err());
         assert!(Forest::new(2, &[num(0, 0.0, Missing::None), num(0, 1.0, Missing::NaN)]).is_err());

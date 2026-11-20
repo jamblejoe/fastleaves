@@ -32,6 +32,20 @@ def test_batch_sizes(n, pred_leaf):
     check(train(*MODEL), rows(n), pred_leaf=pred_leaf)
 
 
+@pytest.mark.parametrize("pred_leaf", [False, True], ids=["predictions", "pred_leaf"])
+@pytest.mark.parametrize("n", [1, 17, 4095, 4096, 4097, 20_000])
+def test_batch_sizes_100_features(n, pred_leaf):
+    check(train("poisson", "100 features", "deep trees"), rows(n, "100 features"), pred_leaf=pred_leaf)
+
+
+def test_unused_features_do_not_count():
+    """A model with 1,000 features that splits on only a few of them (limit: 256 used)."""
+    x = np.random.default_rng(0).normal(size=(500, 1000))
+    model = lightgbm.train({"verbose": -1}, lightgbm.Dataset(x, x[:, 990:].sum(axis=1)), 5)
+    assert (model.feature_importance() > 0).sum() <= 256
+    check(model, np.random.default_rng(1).normal(size=(5000, 1000)))
+
+
 def test_no_rows():
     model = train(*MODEL)
     check(model, rows(0))

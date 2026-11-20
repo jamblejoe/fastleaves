@@ -30,7 +30,7 @@ small batches work but are not optimized.
 |---|---|---|
 | Model files | LightGBM 4.x | older versions |
 | Splits | numerical; categorical with up to 32 distinct categories per feature (any category IDs) | more than 32 categories on one feature |
-| Size | up to 12 features, 253 thresholds per feature | larger models |
+| Size | up to 256 features used in splits (any number of input columns), 253 thresholds per feature | larger models |
 | Missing values | all modes (`None`, `NaN`, `Zero`) | |
 | Output | `regression`, `regression_l1`, `huber`, `fair`, `quantile`, `mape`, `poisson`, `gamma`, `tweedie`; any single-output objective with `raw_score=True` | `binary`/`cross_entropy` probabilities, `sqrt` regression, random-forest mode, multiclass, linear trees |
 | Input | 2D numpy (float64, float32, integer); pandas DataFrame incl. categorical columns | sparse matrices, 1D input |
@@ -40,7 +40,7 @@ small batches work but are not optimized.
 NaN, ±inf, ±0 and unseen categories behave as in LightGBM. `predict` releases the GIL.
 
 Not planned: training, SHAP, GPU, XGBoost/CatBoost models, single-row latency.
-Next after v0.1: models with more features and categories, then `binary` probabilities and multiclass.
+Next: models with more categories and thresholds, then `binary` probabilities and multiclass.
 
 ## Performance
 
@@ -62,7 +62,7 @@ LGBMBench 36b711d, a pre-release build of fastleaves): a 1,500-tree Poisson mode
 ## How it works
 
 Each input value becomes its position among the model's split thresholds, so comparisons
-are small integer compares. AVX-512 runs 16 rows through a tree at once without branching;
+are small integer compares. Only the columns the model splits on are read. AVX-512 runs 16 rows through a tree at once without branching;
 a lane takes a new row as soon as its row reaches a leaf. Rows are processed in cache-sized
 blocks, one tree at a time, and summed in LightGBM's order.
 
