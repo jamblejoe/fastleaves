@@ -29,10 +29,10 @@ fast kernel is not used.
 | File | What it checks |
 |---|---|
 | `test_parity.py` | The parity matrix: objective × dataset × training × predict options. |
-| `test_inputs.py` | Input forms (dtypes, layouts, lists, DataFrames, pandas categories), 255 categories on one feature (every category and unseen ones), 254 thresholds on one feature next to 255 categories (each missing-value mode, every threshold and its neighbors), the largest tree (32,768 leaves, also as a chain 32,767 levels deep, loaded on a 256 KB stack), batch sizes (also with 100 features), models with many unused features, thread counts (also with `pred_leaf`), model files, early stopping, `validate_features`, generated rows (hypothesis). |
+| `test_inputs.py` | Input forms (dtypes, layouts, lists, DataFrames, pandas categories), 255 categories on one feature (every category and unseen ones), 254 thresholds on one feature next to 255 categories (each missing-value mode, every threshold and its neighbors), the largest tree (32,768 leaves: a chain 32,767 levels deep and a complete tree, loaded on a 256 KB stack), batch sizes (also with 100 features), models with many unused features, thread counts (also with `pred_leaf`), model files, early stopping, `validate_features`, generated rows (hypothesis). |
 | `test_refusals.py` | One test for each refusal in the scope table. |
 | `test_random_models.py` | 200 model files with random trees, written directly instead of trained (see below). |
-| `cases.py` | The datasets, objectives, training settings, random model files and test rows the tests share. |
+| `cases.py` | The datasets, objectives, training settings, test rows and hand-written model files (a chain, a complete tree) the tests share. |
 
 ## The parity matrix
 
@@ -72,7 +72,7 @@ To be added to the matrix as features land or as more coverage is wanted.
 
 ## Random model files
 
-Trained models only have the shapes training produces. `random_model` in `cases.py` writes
+Trained models only have the shapes training produces. `random_model` in `test_random_models.py` writes
 model files directly: 1 to 300 columns with up to 256 used, numerical features with up to
 254 thresholds (edge values among them) and any missing type, categorical features with up
 to 255 categories (IDs below 40, 256 or 30,000), 1 to 59 trees of 1 to 1,023 leaves, some

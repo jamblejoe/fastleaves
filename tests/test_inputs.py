@@ -1,6 +1,7 @@
 """Input handling: every input form gives LightGBM's result for the same input."""
 
 import functools
+import itertools
 import os
 import re
 import threading
@@ -17,11 +18,11 @@ import fastleaves
 from cases import (
     DATASETS,
     assert_bit_identical,
+    chain_model,
+    complete_model,
+    edge_rows,
     edge_values,
     features,
-    random_model_file,
-    random_rows,
-    random_tree,
     split_categories,
     split_thresholds,
     splits,
@@ -187,16 +188,18 @@ def on_small_stack(f):
         threading.stack_size(default)
 
 
-@pytest.mark.parametrize("chain", [0.0, 0.5, 1.0], ids=["random shape", "half chain", "chain"])
-def test_largest_tree(chain):
-    """A tree with 32,768 leaves (the most supported) and 65,535 nodes; as a chain, 32,767
-    levels deep. fastleaves loads it on a small stack."""
-    rng = np.random.default_rng(0)
-    pool = {0: np.arange(254.0), 1: np.arange(255)}
-    tree = random_tree(rng, 0, 32_768, {0: "num", 1: "cat"}, {0: 2, 1: 0}, pool, chain)
-    text = random_model_file(2, [tree])
+LARGEST_TREES = {"chain": lambda: chain_model(32_768), "complete": lambda: complete_model(15)}
+
+
+@pytest.mark.parametrize("shape", LARGEST_TREES)
+def test_largest_tree(shape):
+    """The most leaves supported in a tree, 32,768 (65,535 nodes): a chain 32,767 levels deep,
+    and a complete tree 15 levels deep. fastleaves loads it on a small stack. Rows: each edge
+    value of each feature, and every row of 0s and 1s (each leaf of the complete tree)."""
+    text = LARGEST_TREES[shape]()
     model, booster = lightgbm.Booster(model_str=text), on_small_stack(lambda: fastleaves.Booster(model_str=text))
-    x = random_rows(rng, model, 5000)
+    n = model.num_feature()
+    x = np.vstack([edge_rows(model, np.zeros(n)), list(itertools.product([0.0, 1.0], repeat=n))])
     for options in [{}, {"pred_leaf": True}]:
         assert_bit_identical(booster.predict(x, **options), model.predict(x, **options))
 
