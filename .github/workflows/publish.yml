@@ -53,7 +53,7 @@ jobs:
           cat installed
           test "$(cut -d= -f1 installed | tr '\n' ' ')" = "fastleaves numpy "
       - run: /tmp/clean/bin/python -c "import fastleaves; print(fastleaves.isa())"
-      - run: pip install dist/*.whl && pip install pytest hypothesis "lightgbm>=4,<5" pandas
+      - run: pip install dist/*.whl && pip install pytest pytest-xdist hypothesis "lightgbm>=4,<5" pandas
       # pytest puts tests/ on the path, not python/, so the installed wheel is tested
       - name: pytest (fast path if the CPU has AVX-512, see the report header)
         run: pytest
@@ -82,8 +82,9 @@ jobs:
           environmentVariableName: SDE_PATH
           sdeVersion: 10.13.1
       - run: echo "$SDE_PATH" >> "$GITHUB_PATH"
-      - run: pip install dist/*.whl && pip install pytest hypothesis "lightgbm>=4,<5" pandas
-      - run: sde64 -skx -- python -m pytest
+      - run: pip install dist/*.whl && pip install pytest pytest-xdist hypothesis "lightgbm>=4,<5" pandas
+      # one process: SDE cannot follow pytest-xdist's workers into a new python
+      - run: sde64 -skx -- python -m pytest -n 0
 
   publish:
     needs: [test, test-avx512]

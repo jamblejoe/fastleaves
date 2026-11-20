@@ -157,6 +157,11 @@ def split_thresholds(model, feature):
     return {s.threshold for s in splits(model) if s.feature == feature and s.threshold is not None}
 
 
+# (missing, n_thresholds): (seed, number of integers) that thresholds_model's search finds
+# with LightGBM 4.7, tried first so the search does not retrain up to 11 models
+THRESHOLDS_SEEDS = {("None", 254): (6, 255), ("Zero", 254): (8, 255), ("NaN", 254): (6, 253), ("None", 255): (6, 256)}
+
+
 @functools.cache
 def thresholds_model(missing, n_thresholds):
     """A model with exactly `n_thresholds` thresholds on numerical feature 0 and 255
@@ -164,7 +169,9 @@ def thresholds_model(missing, n_thresholds):
     own effect; LightGBM may skip a split or add one at its zero bin boundary, so the
     number of integers and the seed are the first that give `n_thresholds`. `missing` is LightGBM's
     missing type of feature 0: in "Zero" and "NaN" one row in ten is 0 or NaN."""
-    for seed, values in itertools.product(range(6, 16), range(n_thresholds - 1, n_thresholds + 3)):
+    search = itertools.product(range(6, 16), range(n_thresholds - 1, n_thresholds + 3))
+    known = THRESHOLDS_SEEDS.get((missing, n_thresholds))
+    for seed, values in itertools.chain([known] if known else [], search):
         rng = np.random.default_rng(seed)
         n = 50_000
         num = rng.integers(1, values + 1, n).astype(float)
@@ -199,7 +206,12 @@ def edge_values(model):
 
 def input_rows(dataset, model):
     """1000 unseen rows, plus copies of the first one with a single feature set to each
-    edge value of that feature."""
+    edge value of that feature. A fresh copy each call, built once per model."""
+    return _input_rows(dataset, model).copy()
+
+
+@functools.cache
+def _input_rows(dataset, model):
     x = features(np.random.default_rng(1), 1000, DATASETS[dataset])
     edges = []
     for f, values in enumerate(edge_values(model)):

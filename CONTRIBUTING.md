@@ -7,7 +7,7 @@ scope table are the contract; everything here serves them.
 
 ```bash
 pip install maturin && pip install -e ".[test]"   # or: maturin develop --release
-pytest
+pytest                          # one worker per core; -n 0 for one process
 FASTLEAVES_ISA=scalar pytest    # force the scalar path
 cargo test --release            # kernel tests
 ```
