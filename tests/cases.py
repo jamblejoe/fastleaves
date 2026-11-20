@@ -92,7 +92,7 @@ def features(rng, n, data):
 def labels(rng, x, kind, data):
     x = np.nan_to_num(x)
     score = 0.5 * x[:, 0] - 0.3 * x[:, 1] + np.sin(3 * x[:, 2]) + 0.1 * x[:, 4] - 0.02 * x[:, 5] / data.category_step
-    score += 0.3 * x[:, 6:].sum(axis=1)
+    score += 0.05 * x[:, 6:].sum(axis=1)
     score += rng.normal(scale=0.3, size=len(x))
     return {
         "real": lambda: score,
