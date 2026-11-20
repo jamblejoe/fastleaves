@@ -1,5 +1,6 @@
 """Input handling: every input form gives LightGBM's result for the same input."""
 
+import functools
 import os
 import re
 
@@ -18,11 +19,13 @@ from cases import (
     features,
     split_categories,
     split_thresholds,
+    splits,
     thresholds_model,
     train,
 )
 
 MODEL = "poisson", "with NaN", "default"
+PRED_LEAF = pytest.mark.parametrize("pred_leaf", [False, True], ids=["predictions", "pred_leaf"])
 
 
 def check(model, data, **options):
@@ -35,13 +38,13 @@ def rows(n, dataset="with NaN"):
     return features(np.random.default_rng(2), n, DATASETS[dataset])
 
 
-@pytest.mark.parametrize("pred_leaf", [False, True], ids=["predictions", "pred_leaf"])
+@PRED_LEAF
 @pytest.mark.parametrize("n", [1, 15, 16, 17, 63, 64, 65, 4095, 4096, 4097, 20_000])
 def test_batch_sizes(n, pred_leaf):
     check(train(*MODEL), rows(n), pred_leaf=pred_leaf)
 
 
-@pytest.mark.parametrize("pred_leaf", [False, True], ids=["predictions", "pred_leaf"])
+@PRED_LEAF
 @pytest.mark.parametrize("n", [1, 17, 4095, 4096, 4097, 20_000])
 def test_batch_sizes_100_features(n, pred_leaf):
     check(train("poisson", "100 features", "deep trees"), rows(n, "100 features"), pred_leaf=pred_leaf)
@@ -105,7 +108,7 @@ def test_integers_are_read_as_float32():
     check(model, x)
 
 
-@pytest.mark.parametrize("pred_leaf", [False, True], ids=["predictions", "pred_leaf"])
+@PRED_LEAF
 @pytest.mark.parametrize("threads", [1, 2, 3, os.cpu_count() + 1, 0, -1])
 def test_thread_counts(threads, pred_leaf):
     check(train(*MODEL), rows(10_000), num_threads=threads, pred_leaf=pred_leaf)
@@ -134,7 +137,7 @@ def test_best_iteration_from_early_stopping():
     check(model, x)
 
 
-@pytest.mark.parametrize("pred_leaf", [False, True], ids=["predictions", "pred_leaf"])
+@PRED_LEAF
 def test_255_categories_on_one_feature(pred_leaf):
     """The most categories supported, next to a feature with few (set kept in the node)."""
     rng = np.random.default_rng(5)
@@ -150,7 +153,7 @@ def test_255_categories_on_one_feature(pred_leaf):
     check(model, np.vstack([test, x[:1000]]), pred_leaf=pred_leaf)
 
 
-@pytest.mark.parametrize("pred_leaf", [False, True], ids=["predictions", "pred_leaf"])
+@PRED_LEAF
 @pytest.mark.parametrize("missing", ["None", "Zero", "NaN"])
 def test_254_thresholds_on_one_feature(missing, pred_leaf):
     """The most thresholds supported, in each missing-value mode, next to a feature with 255
@@ -159,7 +162,7 @@ def test_254_thresholds_on_one_feature(missing, pred_leaf):
     assert len(split_thresholds(model, 0)) == 254
     assert len(split_categories(model, 1)) == 255
     if missing != "None":  # missing values go left at some splits and right at others
-        assert {int(d) >> 1 & 1 for d in decision_types(model, numerical=True)} == {0, 1}
+        assert {s.default_left for s in splits(model) if s.threshold is not None} == {False, True}
     x = np.random.default_rng(7).integers(0, 257, size=(1000, 2)).astype(float)
     x[::10, 0] = np.nan
     edges = []
@@ -169,13 +172,8 @@ def test_254_thresholds_on_one_feature(missing, pred_leaf):
     check(model, np.vstack([np.array(edges), x]), pred_leaf=pred_leaf)
 
 
-def decision_types(model, numerical):
-    for line in model.model_to_string().splitlines():
-        if line.startswith("decision_type="):
-            yield from (d for d in line.split("=")[1].split() if (int(d) & 1 == 0) == numerical)
-
-
-def test_pandas_categorical_columns():
+@PRED_LEAF
+def test_pandas_categorical_columns(pred_leaf):
     """Categories are matched by value, in the order seen in training, as LightGBM does."""
     rng = np.random.default_rng(3)
     df = pd.DataFrame({"a": rng.normal(size=1000), "c": pd.Categorical(rng.choice(["x", "y", "z", "w"], 1000))})
@@ -184,14 +182,7 @@ def test_pandas_categorical_columns():
         "a": rng.normal(size=8),
         "c": pd.Categorical(["y", "x", "unseen", None, "w", "z", "y", "x"], categories=["y", "unseen", "x", "w", "z"]),
     })
-    check(model, test)
-
-
-def test_pred_leaf_with_pandas_categories():
-    rng = np.random.default_rng(4)
-    df = pd.DataFrame({"a": rng.normal(size=1000), "c": pd.Categorical(rng.choice(list("xyzw"), 1000))})
-    model = lightgbm.train({"verbose": -1, "min_data_per_group": 5}, lightgbm.Dataset(df, df["a"] + (df["c"] == "y")), 10)
-    check(model, df, pred_leaf=True)
+    check(model, test, pred_leaf=pred_leaf)
 
 
 def named(columns):
@@ -202,6 +193,7 @@ def named(columns):
 
 NAMES = ["a", "b", "c", "d", "e", "f"]
 FEATURE_NAMES = {
+    "array (no names to check, as in LightGBM)": rows(50, "numeric"),
     "same names": named(NAMES),
     "other names": named(["a", "b", "c", "d", "e", "g"]),
     "swapped": named(["b", "a", "c", "d", "e", "f"]),
@@ -211,12 +203,16 @@ FEATURE_NAMES = {
 }
 
 
+@functools.cache
+def named_model():
+    x = rows(1000, "numeric")
+    return lightgbm.train({"verbose": -1}, lightgbm.Dataset(pd.DataFrame(x, columns=NAMES), x[:, 0]), 5)
+
+
 @pytest.mark.parametrize("data", FEATURE_NAMES)
 def test_validate_features(data):
     """Same names pass; otherwise LightGBM's message (as ValueError, not LightGBMError)."""
-    x = rows(1000, "numeric")
-    model = lightgbm.train({"verbose": -1}, lightgbm.Dataset(pd.DataFrame(x, columns=NAMES), x[:, 0]), 5)
-    df = FEATURE_NAMES[data]
+    model, df = named_model(), FEATURE_NAMES[data]
     try:
         expected = model.predict(df, validate_features=True)
     except lightgbm.basic.LightGBMError as e:
@@ -224,13 +220,6 @@ def test_validate_features(data):
             fastleaves.Booster.from_lightgbm(model).predict(df, validate_features=True)
     else:
         assert_bit_identical(fastleaves.Booster.from_lightgbm(model).predict(df, validate_features=True), expected)
-
-
-def test_validate_features_ignores_arrays():
-    """As in LightGBM, only DataFrames have names to check."""
-    x = rows(1000, "numeric")
-    model = lightgbm.train({"verbose": -1}, lightgbm.Dataset(pd.DataFrame(x, columns=NAMES), x[:, 0]), 5)
-    check(model, x, validate_features=True)
 
 
 DATASET_MODELS = [("regression", d, "deep trees") for d in DATASETS]
