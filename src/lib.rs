@@ -18,7 +18,7 @@ pub enum Error {
 }
 
 impl Error {
-    pub(crate) fn unsupported(what: String) -> Self {
+    pub(crate) fn unsupported(what: impl std::fmt::Display) -> Self {
         Error::Unsupported(format!("not supported: {what}"))
     }
 }

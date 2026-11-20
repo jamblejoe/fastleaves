@@ -1,6 +1,6 @@
 //! Python module `fastleaves._core`; the user-facing API is in `python/fastleaves`.
 
-use crate::{Error, Output};
+use crate::Error;
 use pyo3::buffer::{Element, PyBuffer};
 use pyo3::create_exception;
 use pyo3::exceptions::PyValueError;
@@ -64,14 +64,8 @@ impl Model {
         raw_score: bool,
         num_threads: usize,
     ) -> PyResult<()> {
-        let m = &self.0;
-        let output: Option<Output> = match (&m.output, raw_score) {
-            (_, true) => None,
-            (Ok(o), false) => Some(*o),
-            (Err(e), false) => return Err(py_err(e.clone())),
-        };
         let (x, rows) = self.rows(&x, start..end)?;
-        let res = run(py, num_threads, rows, |res| m.predict(x, res, start..end, output))?;
+        let res = run(py, num_threads, rows, |res| self.0.predict(x, res, start..end, raw_score))?;
         write(py, &out, &res)
     }
 
@@ -88,7 +82,10 @@ impl Model {
     ) -> PyResult<()> {
         let (x, rows) = self.rows(&x, start..end)?;
         let forest = &self.0.forest;
-        let res = run(py, num_threads, rows * (end - start), |res| forest.predict_leaf(x, res, start..end))?;
+        let res = run(py, num_threads, rows * (end - start), |res| {
+            forest.predict_leaf(x, res, start..end);
+            Ok(())
+        })?;
         write(py, &out, &res)
     }
 }
@@ -114,7 +111,7 @@ impl Model {
         // rows × cols valid f64 values. The buffer keeps the array alive, and the array cannot be
         // resized while exported, until `x` is dropped; the slice borrows `x`, so it cannot outlive it.
         // Python code in another thread may still write to the array while the GIL is released.
-        // fastleaves reads it only in `Forest::bin_row`, which maps every f64 to a valid bin, so such
+        // fastleaves reads it only in `Forest::bin_block`, which maps every f64 to a valid bin, so such
         // a write can only change the predictions of the rows it touches, as in LightGBM.
         Ok((unsafe { ptr.as_ref() }, rows))
     }
@@ -133,15 +130,17 @@ fn run<T: Default + Clone + Send>(
     py: Python,
     num_threads: usize,
     len: usize,
-    f: impl FnOnce(&mut [T]) + Send,
+    f: impl FnOnce(&mut [T]) -> Result<(), Error> + Send,
 ) -> PyResult<Vec<T>> {
     py.detach(|| {
-        let pool = rayon::ThreadPoolBuilder::new().num_threads(num_threads).build()?;
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
         let mut out = vec![T::default(); len];
-        pool.install(|| f(&mut out));
+        pool.install(|| f(&mut out)).map_err(py_err)?;
         Ok(out)
     })
-    .map_err(|e: rayon::ThreadPoolBuildError| PyValueError::new_err(e.to_string()))
 }
 
 /// The SIMD path predictions use: "avx512" or "scalar".
