@@ -13,7 +13,8 @@ cargo test --release                            # kernel against a direct tree w
 The report header shows which kernel ran (`fastleaves kernel: avx512` or `scalar`).
 
 `pytest` runs on one worker per core (pytest-xdist, `-n auto` in `pyproject.toml`); `-n 0`
-runs it in one process, which is easier to debug. `conftest.py` sets `OMP_NUM_THREADS=1`
+runs it in one process, which is easier to debug and is how CI runs it on Intel's emulator
+(SDE cannot follow the workers). `conftest.py` sets `OMP_NUM_THREADS=1`
 unless it is already set, so the workers' LightGBM thread pools do not compete for the cores;
 LightGBM's predictions do not depend on its thread count, and tests that pass `num_threads`
 still set it. Each worker trains a model when it first needs it and caches it with its test

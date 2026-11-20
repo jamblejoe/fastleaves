@@ -29,5 +29,5 @@ jobs:
           sdeVersion: 10.13.1
       - run: echo "$SDE_PATH" >> "$GITHUB_PATH"
       - run: pip install ".[test]"
-      # SDE also emulates the pytest-xdist workers; FASTLEAVES_REQUIRE_AVX512 fails any that is not
-      - run: sde64 -skx -- python -m pytest
+      # one process: SDE cannot follow pytest-xdist's workers into a new python
+      - run: sde64 -skx -- python -m pytest -n 0

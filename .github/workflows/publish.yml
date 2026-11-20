@@ -83,7 +83,8 @@ jobs:
           sdeVersion: 10.13.1
       - run: echo "$SDE_PATH" >> "$GITHUB_PATH"
       - run: pip install dist/*.whl && pip install pytest pytest-xdist hypothesis "lightgbm>=4,<5" pandas
-      - run: sde64 -skx -- python -m pytest
+      # one process: SDE cannot follow pytest-xdist's workers into a new python
+      - run: sde64 -skx -- python -m pytest -n 0
 
   publish:
     needs: [test, test-avx512]
