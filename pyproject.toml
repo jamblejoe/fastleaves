@@ -1,0 +1,41 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "fastleaves"
+dynamic = ["version"]
+description = "Fast batch prediction for LightGBM models, bit-identical to LightGBM"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = ["numpy"]
+keywords = ["lightgbm", "gradient boosting", "inference", "prediction", "avx-512"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Source = "https://github.com/jamblejoe/fastleaves"
+Issues = "https://github.com/jamblejoe/fastleaves/issues"
+Benchmarks = "https://github.com/jamblejoe/LGBMBench"
+
+[project.optional-dependencies]
+test = ["pytest", "hypothesis", "lightgbm>=4,<5", "pandas"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "fastleaves._core"
+features = ["python", "pyo3/extension-module", "pyo3/abi3-py311"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

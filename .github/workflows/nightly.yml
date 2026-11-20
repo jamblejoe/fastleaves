@@ -1,0 +1,32 @@
+name: nightly
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths: [.github/workflows/nightly.yml]
+
+env:
+  # `-skx`: Intel SDE emulates Skylake-X, the oldest CPU with AVX-512F and BMI2
+  FASTLEAVES_REQUIRE_AVX512: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  # The whole Python suite on the fast kernel, on Intel's AVX-512 emulator (too slow for every PR).
+  avx512:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Intel SDE (AVX-512 emulator)
+        uses: petarpetrovt/setup-sde@6d2773bc0ef3005fd52e0ae0bb91782321793aec # v6.0
+        with:
+          environmentVariableName: SDE_PATH
+          sdeVersion: 10.13.1
+      - run: echo "$SDE_PATH" >> "$GITHUB_PATH"
+      - run: pip install ".[test]"
+      - run: sde64 -skx -- python -m pytest

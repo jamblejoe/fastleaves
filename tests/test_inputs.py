@@ -1,0 +1,183 @@
+"""Input handling: every input form gives LightGBM's result for the same input."""
+
+import os
+import re
+
+import lightgbm
+import numpy as np
+import pandas as pd
+import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+import fastleaves
+from cases import DATASETS, assert_bit_identical, edge_values, features, train
+
+MODEL = "poisson", "with NaN", "default"
+
+
+def check(model, data, **options):
+    """fastleaves predicts on `data` exactly what LightGBM predicts."""
+    expected = model.predict(data, **options)
+    assert_bit_identical(fastleaves.Booster.from_lightgbm(model).predict(data, **options), expected)
+
+
+def rows(n, dataset="with NaN"):
+    return features(np.random.default_rng(2), n, DATASETS[dataset])
+
+
+@pytest.mark.parametrize("pred_leaf", [False, True], ids=["predictions", "pred_leaf"])
+@pytest.mark.parametrize("n", [1, 15, 16, 17, 63, 64, 65, 4095, 4096, 4097, 20_000])
+def test_batch_sizes(n, pred_leaf):
+    check(train(*MODEL), rows(n), pred_leaf=pred_leaf)
+
+
+def test_no_rows():
+    model = train(*MODEL)
+    check(model, rows(0))
+    # LightGBM fails here (ZeroDivisionError when it reshapes); fastleaves returns no rows
+    leaves = fastleaves.Booster.from_lightgbm(model).predict(rows(0), pred_leaf=True)
+    assert_bit_identical(leaves, np.zeros((0, model.num_trees()), dtype=np.int32))
+
+
+def read_only(x):
+    x = x.copy()
+    x.flags.writeable = False
+    return x
+
+
+def unaligned(x):
+    """`x` in memory that is not 8-byte aligned."""
+    y = np.empty(x.nbytes + 1, dtype=np.uint8)[1:].view(np.float64).reshape(x.shape)
+    y[...] = x
+    assert not y.flags.aligned
+    return y
+
+
+INPUT_FORMS = {
+    "float64": lambda x: x,
+    "float32": lambda x: x.astype(np.float32),
+    "Fortran order": lambda x: np.asfortranarray(x),
+    "every second row": lambda x: np.repeat(x, 2, axis=0)[::2],
+    "read-only": read_only,
+    "unaligned": unaligned,
+    "list of lists": lambda x: x.tolist(),
+    "int64 (LightGBM reads it as float32)": lambda x: (x * 1e7).astype(np.int64),
+    "int32": lambda x: x.astype(np.int32),
+    "bool": lambda x: x > 0,
+    "DataFrame": lambda x: pd.DataFrame(x),
+    "DataFrame of float32 and int16": lambda x: pd.DataFrame(x).astype({0: np.float32, 4: np.int16}),
+}
+
+
+@pytest.mark.parametrize("form", INPUT_FORMS)
+def test_input_forms(form):
+    check(train(*MODEL), INPUT_FORMS[form](rows(300, "numeric")))
+
+
+def test_integers_are_read_as_float32():
+    """LightGBM converts integer arrays to float32, so 2**24 + 1 is read as 2**24."""
+    x = (2**24 + np.arange(8)).repeat(50).reshape(-1, 1)
+    model = lightgbm.train({"verbose": -1, "min_data_in_leaf": 5}, lightgbm.Dataset(x.astype(float), x[:, 0] % 2), 5)
+    check(model, x)
+
+
+@pytest.mark.parametrize("pred_leaf", [False, True], ids=["predictions", "pred_leaf"])
+@pytest.mark.parametrize("threads", [1, 2, 3, os.cpu_count() + 1, 0, -1])
+def test_thread_counts(threads, pred_leaf):
+    check(train(*MODEL), rows(10_000), num_threads=threads, pred_leaf=pred_leaf)
+
+
+def test_model_file_and_string(tmp_path):
+    model = train(*MODEL)
+    model.save_model(tmp_path / "model.txt")
+    x, expected = rows(500), model.predict(rows(500))
+    assert_bit_identical(fastleaves.Booster(model_file=tmp_path / "model.txt").predict(x), expected)
+    assert_bit_identical(fastleaves.Booster(model_str=model.model_to_string()).predict(x), expected)
+
+
+def test_best_iteration_from_early_stopping():
+    x = rows(2000, "numeric")
+    y = np.exp(x[:, 0])
+    valid = lightgbm.Dataset(x[1000:], y[1000:])
+    model = lightgbm.train(
+        {"objective": "poisson", "verbose": -1, "learning_rate": 0.5},
+        lightgbm.Dataset(x[:1000], y[:1000]),
+        num_boost_round=200,
+        valid_sets=[valid],
+        callbacks=[lightgbm.early_stopping(3, verbose=False)],
+    )
+    assert 0 < model.best_iteration < 200
+    check(model, x)
+
+
+def test_pandas_categorical_columns():
+    """Categories are matched by value, in the order seen in training, as LightGBM does."""
+    rng = np.random.default_rng(3)
+    df = pd.DataFrame({"a": rng.normal(size=1000), "c": pd.Categorical(rng.choice(["x", "y", "z", "w"], 1000))})
+    model = lightgbm.train({"verbose": -1, "min_data_per_group": 5}, lightgbm.Dataset(df, df["a"] + (df["c"] == "y")), 10)
+    test = pd.DataFrame({
+        "a": rng.normal(size=8),
+        "c": pd.Categorical(["y", "x", "unseen", None, "w", "z", "y", "x"], categories=["y", "unseen", "x", "w", "z"]),
+    })
+    check(model, test)
+
+
+def test_pred_leaf_with_pandas_categories():
+    rng = np.random.default_rng(4)
+    df = pd.DataFrame({"a": rng.normal(size=1000), "c": pd.Categorical(rng.choice(list("xyzw"), 1000))})
+    model = lightgbm.train({"verbose": -1, "min_data_per_group": 5}, lightgbm.Dataset(df, df["a"] + (df["c"] == "y")), 10)
+    check(model, df, pred_leaf=True)
+
+
+def named(columns):
+    """50 rows with the given column names, one column per name (repeating features)."""
+    x = rows(50, "numeric")
+    return pd.DataFrame(x[:, [i % 6 for i in range(len(columns))]], columns=list(columns))
+
+
+NAMES = ["a", "b", "c", "d", "e", "f"]
+FEATURE_NAMES = {
+    "same names": named(NAMES),
+    "other names": named(["a", "b", "c", "d", "e", "g"]),
+    "swapped": named(["b", "a", "c", "d", "e", "f"]),
+    "integer names": named(range(6)),
+    "too few": named(NAMES[:5]),
+    "too many": named(NAMES + ["g"]),
+}
+
+
+@pytest.mark.parametrize("data", FEATURE_NAMES)
+def test_validate_features(data):
+    """Same names pass; otherwise LightGBM's message (as ValueError, not LightGBMError)."""
+    x = rows(1000, "numeric")
+    model = lightgbm.train({"verbose": -1}, lightgbm.Dataset(pd.DataFrame(x, columns=NAMES), x[:, 0]), 5)
+    df = FEATURE_NAMES[data]
+    try:
+        expected = model.predict(df, validate_features=True)
+    except lightgbm.basic.LightGBMError as e:
+        with pytest.raises(ValueError, match=f"^{re.escape(str(e))}$"):
+            fastleaves.Booster.from_lightgbm(model).predict(df, validate_features=True)
+    else:
+        assert_bit_identical(fastleaves.Booster.from_lightgbm(model).predict(df, validate_features=True), expected)
+
+
+def test_validate_features_ignores_arrays():
+    """As in LightGBM, only DataFrames have names to check."""
+    x = rows(1000, "numeric")
+    model = lightgbm.train({"verbose": -1}, lightgbm.Dataset(pd.DataFrame(x, columns=NAMES), x[:, 0]), 5)
+    check(model, x, validate_features=True)
+
+
+DATASET_MODELS = [("regression", d, "deep trees") for d in DATASETS]
+
+
+@pytest.mark.parametrize("objective,dataset,training", DATASET_MODELS, ids=[m[1] for m in DATASET_MODELS])
+@settings(max_examples=50, deadline=None)
+@given(data=st.data())
+def test_generated_rows(objective, dataset, training, data):
+    """Rows built from edge values, thresholds and their neighbors, and arbitrary doubles."""
+    model = train(objective, dataset, training)
+    columns = [st.sampled_from(values) | st.floats() for values in edge_values(model)]
+    x = data.draw(st.lists(st.tuples(*columns), min_size=1, max_size=40))
+    check(model, np.array(x, dtype=np.float64))

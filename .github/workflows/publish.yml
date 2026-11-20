@@ -1,0 +1,101 @@
+name: publish
+# A `v*` tag builds the wheel, tests the installed wheel and publishes it to PyPI.
+# Run by hand (workflow_dispatch) for a dry run: build and tests, no upload.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches the version in Cargo.toml
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, Cargo.toml $version"; exit 1; }
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          target: x86_64
+          manylinux: auto
+          args: --release --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+  # The installed wheel, not the source tree: alone with numpy, then the whole test suite.
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Clean environment, only numpy installed
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install dist/*.whl
+          /tmp/clean/bin/pip list --format=freeze | grep -v -E '^(pip|setuptools)=' | sort > installed
+          cat installed
+          test "$(cut -d= -f1 installed | tr '\n' ' ')" = "fastleaves numpy "
+      - run: /tmp/clean/bin/python -c "import fastleaves; print(fastleaves.isa())"
+      - run: pip install dist/*.whl && pip install pytest hypothesis "lightgbm>=4,<5" pandas
+      # pytest puts tests/ on the path, not python/, so the installed wheel is tested
+      - name: pytest (fast path if the CPU has AVX-512, see the report header)
+        run: pytest
+      - name: pytest (scalar path)
+        run: FASTLEAVES_ISA=scalar pytest
+
+  # GitHub's runners may lack AVX-512: the whole suite on Intel's emulator, as nightly.yml.
+  test-avx512:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      # `-skx`: Intel SDE emulates Skylake-X, the oldest CPU with AVX-512F and BMI2
+      FASTLEAVES_REQUIRE_AVX512: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Intel SDE (AVX-512 emulator)
+        uses: petarpetrovt/setup-sde@6d2773bc0ef3005fd52e0ae0bb91782321793aec # v6.0
+        with:
+          environmentVariableName: SDE_PATH
+          sdeVersion: 10.13.1
+      - run: echo "$SDE_PATH" >> "$GITHUB_PATH"
+      - run: pip install dist/*.whl && pip install pytest hypothesis "lightgbm>=4,<5" pandas
+      - run: sde64 -skx -- python -m pytest
+
+  publish:
+    needs: [test, test-avx512]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    # trusted publishing: PyPI accepts uploads from this file (publish.yml) of jamblejoe/fastleaves
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3

@@ -1,0 +1,16 @@
+[package]
+name = "fastleaves"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false  # released as a Python wheel only
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+python = ["dep:pyo3"]
+
+[dependencies]
+rayon = "1"
+pyo3 = { version = "0.30", optional = true }
