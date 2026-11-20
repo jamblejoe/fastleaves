@@ -34,10 +34,10 @@ impl Model {
             return Err(Error::unsupported(format!("model version {version}, only v4 (LightGBM 4.x)")));
         }
         if get("num_class")? != "1" || get("num_tree_per_iteration")? != "1" {
-            return Err(Error::unsupported("multiclass models".into()));
+            return Err(Error::unsupported("multiclass models"));
         }
         if header.contains_key("average_output") {
-            return Err(Error::unsupported("random forest mode (average_output)".into()));
+            return Err(Error::unsupported("random forest mode (average_output)"));
         }
         let n_features = number::<usize>(get("max_feature_idx")?)? + 1;
         let feature_names = get("feature_names")?.split(' ').map(String::from).collect();
@@ -57,21 +57,28 @@ impl Model {
         })
     }
 
-    /// Predictions for the row-major matrix `x` from `trees`; raw scores if `output` is `None`.
-    pub fn predict(&self, x: &[f64], out: &mut [f64], trees: Range<usize>, output: Option<Output>) {
+    /// Predictions for the row-major matrix `x` from `trees`, or raw scores if `raw_score`.
+    /// Fails before any work if the output transformation is not supported and `raw_score` is false.
+    pub fn predict(
+        &self,
+        x: &[f64],
+        out: &mut [f64],
+        trees: Range<usize>,
+        raw_score: bool,
+    ) -> Result<(), Error> {
+        let output = if raw_score { Output::Identity } else { self.output.clone()? };
         self.forest.predict_raw(x, out, trees);
-        if output == Some(Output::Exp) {
+        if output == Output::Exp {
             out.iter_mut().for_each(|v| *v = v.exp());
         }
+        Ok(())
     }
 }
 
 fn output(objective: &str) -> Result<Output, Error> {
     let mut words = objective.split(' ');
     match words.next().unwrap_or("") {
-        "regression" if words.any(|w| w == "sqrt") => {
-            Err(Error::unsupported("output of sqrt regression".into()))
-        }
+        "regression" if words.any(|w| w == "sqrt") => Err(Error::unsupported("output of sqrt regression")),
         "regression" | "regression_l1" | "huber" | "fair" | "quantile" | "mape" => Ok(Output::Identity),
         "poisson" | "gamma" | "tweedie" => Ok(Output::Exp),
         name => Err(Error::unsupported(format!("output of objective {name}"))),
@@ -82,18 +89,18 @@ fn parse_tree(block: &str) -> Result<Node, Error> {
     let kv = key_values(block);
     let get = |key| kv.get(key).copied().ok_or_else(|| invalid(format!("tree without {key}")));
     if kv.get("is_linear").is_some_and(|v| *v != "0") {
-        return Err(Error::unsupported("linear trees".into()));
+        return Err(Error::unsupported("linear trees"));
     }
     let num_leaves: usize = number(get("num_leaves")?)?;
     if num_leaves == 0 {
-        return Err(invalid("tree without leaves".into()));
+        return Err(invalid("tree without leaves"));
     }
     let leaf_value: Vec<f64> = numbers(get("leaf_value")?, num_leaves)?;
     if num_leaves == 1 {
         return Ok(Node::Leaf { value: leaf_value[0], index: 0 });
     }
     if num_leaves > 32768 {
-        return Err(Error::unsupported("trees with more than 32768 leaves".into()));
+        return Err(Error::unsupported("trees with more than 32768 leaves"));
     }
     let n = num_leaves - 1;
     let (cat_boundaries, cat_threshold) = match kv.get("cat_boundaries") {
@@ -163,7 +170,7 @@ impl Tree {
     }
 }
 
-fn invalid(what: String) -> Error {
+fn invalid(what: impl std::fmt::Display) -> Error {
     Error::Invalid(format!("invalid model: {what}"))
 }
 
@@ -229,9 +236,9 @@ shrinkage=1";
         text.lines().filter_map(line).collect::<Vec<_>>().join("\n") + "\n"
     }
 
-    fn predict(m: &Model, x: &[f64], output: Option<Output>) -> Vec<f64> {
+    fn predict(m: &Model, x: &[f64], raw_score: bool) -> Vec<f64> {
         let mut out = vec![0.0; x.len() / 2];
-        m.predict(x, &mut out, 0..m.forest.n_trees(), output);
+        m.predict(x, &mut out, 0..m.forest.n_trees(), raw_score).unwrap();
         out
     }
 
@@ -242,8 +249,8 @@ shrinkage=1";
         assert_eq!(m.feature_names, ["a", "b"]);
         assert_eq!((m.objective.as_str(), m.output.clone()), ("poisson", Ok(Output::Exp)));
         let x = [0.2, 1.0, 0.2, 2.0, 0.7, 1.0, f64::NAN, 1.9];
-        assert_eq!(predict(&m, &x, None), [1.0, 2.0, 3.0, 1.0]);
-        assert_eq!(predict(&m, &x, Some(Output::Exp)), [1f64.exp(), 2f64.exp(), 3f64.exp(), 1f64.exp()]);
+        assert_eq!(predict(&m, &x, true), [1.0, 2.0, 3.0, 1.0]);
+        assert_eq!(predict(&m, &x, false), [1f64.exp(), 2f64.exp(), 3f64.exp(), 1f64.exp()]);
         let mut leaf = vec![-1; 4];
         m.forest.predict_leaf(&x, &mut leaf, 0..1);
         assert_eq!(leaf, [0, 1, 2, 0]); // LightGBM's leaf numbers, not the packed order
@@ -254,12 +261,12 @@ shrinkage=1";
         let single = "Tree=0\nnum_leaves=1\nnum_cat=0\nsplit_feature=\nsplit_gain=\nthreshold=\n\
                       decision_type=\nleft_child=\nright_child=\nleaf_value=0.25\nis_linear=0\nshrinkage=1";
         let m = Model::parse(&model(&[single, TREE])).unwrap();
-        assert_eq!(predict(&m, &[0.7, 0.0], None), [3.25]);
+        assert_eq!(predict(&m, &[0.7, 0.0], true), [3.25]);
         let mut leaf = vec![-1; 2];
         m.forest.predict_leaf(&[0.7, 0.0], &mut leaf, 0..2);
         assert_eq!(leaf, [0, 2]);
         let empty = Model::parse(&format!("{HEADER}\nend of trees\n")).unwrap();
-        assert_eq!(predict(&empty, &[0.7, 0.0], None), [0.0]);
+        assert_eq!(predict(&empty, &[0.7, 0.0], true), [0.0]);
     }
 
     #[test]
