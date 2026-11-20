@@ -60,8 +60,7 @@ class Booster:
         """
         if pred_contrib:
             raise UnsupportedError("not supported: pred_contrib=True")
-        pd = sys.modules.get("pandas")
-        if validate_features and pd is not None and isinstance(data, pd.DataFrame):
+        if validate_features and _is_dataframe(data):
             self._validate_features(data)
         if num_iteration is None:  # as LightGBM
             num_iteration = self.best_iteration if start_iteration <= 0 else -1
@@ -100,8 +99,7 @@ def _pandas_categorical(model_str):
 
 def _to_float64(data, pandas_categorical):
     """`data` as an aligned, C-contiguous float64 matrix, converted exactly as LightGBM converts it."""
-    pd = sys.modules.get("pandas")
-    if pd is not None and isinstance(data, pd.DataFrame):
+    if _is_dataframe(data):
         data = _from_pandas(data, pandas_categorical)
     elif isinstance(data, list):
         data = np.array(data)
@@ -114,10 +112,15 @@ def _to_float64(data, pandas_categorical):
     return np.require(data, np.float64, ["C", "A"])
 
 
+def _is_dataframe(data):
+    """Whether `data` is a pandas DataFrame, without importing pandas."""
+    pd = sys.modules.get("pandas")
+    return pd is not None and isinstance(data, pd.DataFrame)
+
+
 def _from_pandas(df, pandas_categorical):
     """LightGBM's `_data_from_pandas`: categorical columns become their codes, -1 becomes NaN."""
-    import pandas as pd
-
+    pd = sys.modules["pandas"]
     if df.ndim != 2 or df.shape[0] < 1:
         raise ValueError("Input data must be 2 dimensional and non empty.")
     df = df.copy(deep=False)
