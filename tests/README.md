@@ -21,7 +21,7 @@ fast kernel is not used.
 | File | What it checks |
 |---|---|
 | `test_parity.py` | The parity matrix: objective × dataset × training × predict options. |
-| `test_inputs.py` | Input forms (dtypes, layouts, lists, DataFrames, pandas categories), 255 categories on one feature (every category and unseen ones), batch sizes (also with 100 features), models with many unused features, thread counts (also with `pred_leaf`), model files, early stopping, `validate_features`, generated rows (hypothesis). |
+| `test_inputs.py` | Input forms (dtypes, layouts, lists, DataFrames, pandas categories), 255 categories on one feature (every category and unseen ones), 254 thresholds on one feature next to 255 categories (each missing-value mode, every threshold and its neighbors), batch sizes (also with 100 features), models with many unused features, thread counts (also with `pred_leaf`), model files, early stopping, `validate_features`, generated rows (hypothesis). |
 | `test_refusals.py` | One test for each refusal in the scope table. |
 | `cases.py` | The datasets, objectives, training settings and test rows the tests share. |
 
@@ -55,7 +55,7 @@ To be added to the matrix as features land or as more coverage is wanted.
 | Dimension | Planned values |
 |---|---|
 | Objective | lambdarank, rank_xendcg (need query groups); binary/cross_entropy probabilities; multiclass, multiclassova; custom objective (no transformation) |
-| Model shape | more than 253 thresholds (16-bit bins); single-leaf trees |
+| Model shape | more than 254 thresholds (16-bit bins); single-leaf trees |
 | Training | monotone and interaction constraints; forced splits; path smoothing; `max_bin` 2 / 15 / 1023; categorical parameters (`max_cat_threshold`, `cat_smooth`, `max_cat_to_onehot`); `init_model` (continued training); `refit` |
 | Predict options | `pred_early_stop`; `predict_disable_shape_check` |
 | Inputs | sparse matrices; pyarrow and polars tables |

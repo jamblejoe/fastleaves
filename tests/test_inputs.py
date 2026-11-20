@@ -11,7 +11,16 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 import fastleaves
-from cases import DATASETS, assert_bit_identical, edge_values, features, split_categories, train
+from cases import (
+    DATASETS,
+    assert_bit_identical,
+    edge_values,
+    features,
+    split_categories,
+    split_thresholds,
+    thresholds_model,
+    train,
+)
 
 MODEL = "poisson", "with NaN", "default"
 
@@ -139,6 +148,31 @@ def test_255_categories_on_one_feature(pred_leaf):
     test = np.tile(x[:1], (2 * 260 + 1, 1))
     test[:, 0] = [*(c + d for c in range(-1, 259) for d in (0.0, 0.5)), np.nan]  # every category, unseen ones
     check(model, np.vstack([test, x[:1000]]), pred_leaf=pred_leaf)
+
+
+@pytest.mark.parametrize("pred_leaf", [False, True], ids=["predictions", "pred_leaf"])
+@pytest.mark.parametrize("missing", ["None", "Zero", "NaN"])
+def test_254_thresholds_on_one_feature(missing, pred_leaf):
+    """The most thresholds supported, in each missing-value mode, next to a feature with 255
+    categories: missing values and unseen categories share a bin value."""
+    model = thresholds_model(missing, 254)
+    assert len(split_thresholds(model, 0)) == 254
+    assert len(split_categories(model, 1)) == 255
+    if missing != "None":  # missing values go left at some splits and right at others
+        assert {int(d) >> 1 & 1 for d in decision_types(model, numerical=True)} == {0, 1}
+    x = np.random.default_rng(7).integers(0, 257, size=(1000, 2)).astype(float)
+    x[::10, 0] = np.nan
+    edges = []
+    for v0 in edge_values(model)[0]:
+        for v1 in [0.0, 100.0, 254.0, 255.0, 256.0, -1.0, np.nan]:  # known and unseen categories
+            edges.append([v0, v1])
+    check(model, np.vstack([np.array(edges), x]), pred_leaf=pred_leaf)
+
+
+def decision_types(model, numerical):
+    for line in model.model_to_string().splitlines():
+        if line.startswith("decision_type="):
+            yield from (d for d in line.split("=")[1].split() if (int(d) & 1 == 0) == numerical)
 
 
 def test_pandas_categorical_columns():

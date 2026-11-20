@@ -2,6 +2,7 @@
 and the bit-for-bit comparison. The matrix that combines them is in test_parity.py."""
 
 import functools
+import itertools
 from dataclasses import dataclass, field
 
 import lightgbm as lgb
@@ -139,6 +140,38 @@ def splits(model):
 def split_categories(model, feature):
     """The categories in any of the model's splits on `feature`."""
     return {c for f, _, cats in splits(model) if f == feature and cats for c in cats}
+
+
+def split_thresholds(model, feature):
+    """The numerical thresholds in any of the model's splits on `feature`."""
+    return {t for f, t, _ in splits(model) if f == feature and t is not None}
+
+
+@functools.cache
+def thresholds_model(missing, n_thresholds):
+    """A model with exactly `n_thresholds` thresholds on numerical feature 0 and 255
+    categories on categorical feature 1. Feature 0 takes integers 1, 2, ..., each with its
+    own effect; LightGBM may skip a split or add one at its zero bin boundary, so the
+    number of integers and the seed are the first that give `n_thresholds`. `missing` is LightGBM's
+    missing type of feature 0: in "Zero" and "NaN" one row in ten is 0 or NaN."""
+    for seed, values in itertools.product(range(6, 16), range(n_thresholds - 1, n_thresholds + 3)):
+        rng = np.random.default_rng(seed)
+        n = 50_000
+        num = rng.integers(1, values + 1, n).astype(float)
+        cat = rng.integers(0, 256, n).astype(float)
+        y = rng.normal(size=values + 1)[num.astype(int)] + 0.3 * rng.normal(size=256)[cat.astype(int)]
+        hole = rng.random(n) < 0.1
+        num, params = {
+            "None": (num, {"use_missing": False}),
+            "Zero": (np.where(hole, 0.0, num), {"zero_as_missing": True}),
+            "NaN": (np.where(hole, np.nan, num), {}),
+        }[missing]
+        params = {"verbose": -1, "num_leaves": 255, "min_data_in_leaf": 2, "learning_rate": 0.5, "max_bin": 1023,
+                  "min_data_per_group": 5, "cat_smooth": 1, "max_cat_threshold": 128, **params}
+        model = lgb.train(params, lgb.Dataset(np.column_stack([num, cat]), y, categorical_feature=[1]), 100)
+        if len(split_thresholds(model, 0)) == n_thresholds:
+            return model
+    raise AssertionError(f"no model with {n_thresholds} thresholds ({missing})")
 
 
 def edge_values(model):

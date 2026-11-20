@@ -6,6 +6,10 @@
 //! - categorical: the position of the category among the feature's categories (those in
 //!   any of its splits' sets), or `NO_CAT` (goes right) if it is none of them.
 //!
+//! `MISSING` and `NO_CAT` are the same byte, 255: numerical bins are at most 254 (254
+//! thresholds), category positions at most 254, and the kernels test for `MISSING` only on
+//! numerical splits. A categorical split never has bit 255 set, so `NO_CAT` goes right.
+//!
 //! The columns the model splits on get slots 0, 1, ... in column order; columns it never
 //! splits on are not read. Bins are stored per block of `BLOCK` rows, slot by slot: the bin of
 //! slot `s` and row `r` is at `s * BLOCK + r`, so a tree reads only the slots it splits on.
@@ -26,7 +30,7 @@ use std::collections::VecDeque;
 use std::ops::Range;
 
 pub const MAX_FEATURES: usize = 256; // columns used in splits
-pub const MAX_THRESHOLDS: usize = 253;
+pub const MAX_THRESHOLDS: usize = 254; // per feature
 pub const MAX_CATEGORIES: usize = 255; // per feature
 const INLINE_CATEGORIES: usize = 32; // more: the split's set is in `Forest::sets`
 pub(crate) const SET_WORDS: usize = 1 << SET_WORDS_BITS; // u32 words per set in `Forest::sets`
@@ -35,8 +39,8 @@ pub(crate) const WIDE: u32 = 1 << 27;
 pub(crate) const CAT: u32 = 1 << 28;
 pub(crate) const LEAF: u32 = 1 << 29;
 pub(crate) const DEFAULT_LEFT: u32 = 1 << 30;
-pub(crate) const MISSING: u8 = 254;
-const NO_CAT: u8 = 255;
+pub(crate) const MISSING: u8 = 255; // numerical splits
+const NO_CAT: u8 = 255; // categorical splits
 pub(crate) const BLOCK: usize = 1 << BLOCK_BITS; // rows per block
 pub(crate) const BLOCK_BITS: u32 = 12;
 const ZERO: f64 = 1e-35f32 as f64; // LightGBM reads inputs within ±ZERO as 0
