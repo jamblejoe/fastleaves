@@ -31,7 +31,8 @@ fast kernel is not used.
 | `test_parity.py` | The parity matrix: objective × dataset × training × predict options. |
 | `test_inputs.py` | Input forms (dtypes, layouts, lists, DataFrames, pandas categories), 255 categories on one feature (every category and unseen ones), 254 thresholds on one feature next to 255 categories (each missing-value mode, every threshold and its neighbors), batch sizes (also with 100 features), models with many unused features, thread counts (also with `pred_leaf`), model files, early stopping, `validate_features`, generated rows (hypothesis). |
 | `test_refusals.py` | One test for each refusal in the scope table. |
-| `cases.py` | The datasets, objectives, training settings and test rows the tests share. |
+| `test_random_models.py` | 200 model files with random trees, written directly instead of trained (see below). |
+| `cases.py` | The datasets, objectives, training settings, random model files and test rows the tests share. |
 
 ## The parity matrix
 
@@ -63,8 +64,19 @@ To be added to the matrix as features land or as more coverage is wanted.
 | Dimension | Planned values |
 |---|---|
 | Objective | lambdarank, rank_xendcg (need query groups); binary/cross_entropy probabilities; multiclass, multiclassova; custom objective (no transformation) |
-| Model shape | more than 254 thresholds (16-bit bins); single-leaf trees |
+| Model shape | more than 254 thresholds (16-bit bins); single-leaf trees in trained models (random model files have them) |
 | Training | monotone and interaction constraints; forced splits; path smoothing; `max_bin` 2 / 15 / 1023; categorical parameters (`max_cat_threshold`, `cat_smooth`, `max_cat_to_onehot`); `init_model` (continued training); `refit` |
 | Predict options | `pred_early_stop`; `predict_disable_shape_check` |
 | Inputs | sparse matrices; pyarrow and polars tables |
 | Environment | each LightGBM 4.x release; model files saved by older 4.x releases; CPUs without AVX-512 in CI |
+
+## Random model files
+
+Trained models only have the shapes training produces. `random_model` in `cases.py` writes
+model files directly: 1 to 300 columns with up to 256 used, numerical features with up to
+254 thresholds (edge values among them) and any missing type, categorical features with up
+to 255 categories (IDs below 40, 256 or 30,000), 1 to 59 trees of 1 to 1,023 leaves, some
+nearly chains, mixed `default_left`, leaf values of magnitude 1e-6 to 1e6 and ±0. LightGBM loads the
+same file. Each model predicts 5,000 rows (more than one block), most values edge values of
+their feature, with default options, `raw_score`, `pred_leaf` and a random iteration range.
+Every model is within the scope table, so a refusal fails the test. The seed is the test ID.
