@@ -13,10 +13,6 @@ from cases import split_categories, split_thresholds, thresholds_model, train
 UnsupportedError = fastleaves.UnsupportedError
 
 
-def trained(x, y, categorical_feature="auto", **params):
-    return lightgbm.train({"verbose": -1, **params}, lightgbm.Dataset(x, y, categorical_feature=categorical_feature), 5)
-
-
 def wide_model():
     x = np.random.default_rng(0).normal(size=(2000, 300))
     params = {"verbose": -1, "num_leaves": 63, "min_data_in_leaf": 5}
@@ -29,8 +25,8 @@ def many_categories_model():
     rng = np.random.default_rng(0)
     x = rng.integers(0, 257, size=(50_000, 1)).astype(float)
     y = rng.normal(size=257)[x[:, 0].astype(int)]  # an unrelated effect per category
-    params = {"min_data_per_group": 5, "cat_smooth": 1, "max_cat_threshold": 128, "num_leaves": 31, "max_bin": 1023}
-    model = trained(x, y, categorical_feature=[0], **params)
+    params = {"verbose": -1, "min_data_per_group": 5, "cat_smooth": 1, "max_cat_threshold": 128, "max_bin": 1023}
+    model = lightgbm.train(params, lightgbm.Dataset(x, y, categorical_feature=[0]), 5)
     assert len(split_categories(model, 0)) == 256  # one more than supported
     return model
 

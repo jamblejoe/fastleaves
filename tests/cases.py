@@ -4,6 +4,7 @@ and the bit-for-bit comparison. The matrix that combines them is in test_parity.
 import functools
 import itertools
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import lightgbm as lgb
 import numpy as np
@@ -122,29 +123,38 @@ EDGE_VALUES = [np.nan, np.inf, -np.inf, 0.0, -0.0, ZERO, -ZERO, np.nextafter(ZER
 CATEGORIES = [c + d for c in [*range(-1, 34), 199, 200, 254, 255, 256] for d in (0.0, 0.5)]
 
 
+class Split(NamedTuple):
+    feature: int
+    threshold: float | None  # numerical splits
+    categories: list | None  # categorical splits: the categories that go left
+    default_left: bool  # missing values go left
+
+
 def splits(model):
-    """(feature, numerical threshold or None, categories that go left or None) of each split."""
+    """Every split of the model, as a Split."""
     for block in model.model_to_string().split("\n\n"):
         tree = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
         if "split_feature" not in tree:
             continue
         for f, t, d in zip(*(tree[k].split() for k in ("split_feature", "threshold", "decision_type"))):
+            default_left = bool(int(d) & 2)
             if int(d) & 1 == 0:  # numerical split
-                yield int(f), float(t), None
+                yield Split(int(f), float(t), None, default_left)
             else:  # categorical: the threshold indexes a bitset of the categories that go left
                 b = [int(v) for v in tree["cat_boundaries"].split()][int(t) : int(t) + 2]
                 words = [int(w) for w in tree["cat_threshold"].split()[b[0] : b[1]]]
-                yield int(f), None, [32 * i + k for i, w in enumerate(words) for k in range(32) if w >> k & 1]
+                cats = [32 * i + k for i, w in enumerate(words) for k in range(32) if w >> k & 1]
+                yield Split(int(f), None, cats, default_left)
 
 
 def split_categories(model, feature):
     """The categories in any of the model's splits on `feature`."""
-    return {c for f, _, cats in splits(model) if f == feature and cats for c in cats}
+    return {c for s in splits(model) if s.feature == feature and s.categories for c in s.categories}
 
 
 def split_thresholds(model, feature):
     """The numerical thresholds in any of the model's splits on `feature`."""
-    return {t for f, t, _ in splits(model) if f == feature and t is not None}
+    return {s.threshold for s in splits(model) if s.feature == feature and s.threshold is not None}
 
 
 @functools.cache
@@ -178,11 +188,12 @@ def edge_values(model):
     """Per feature: EDGE_VALUES, every category up to 33 and some above, each split threshold
     with its neighboring doubles, and each category of a split with its neighbors."""
     values = [EDGE_VALUES + CATEGORIES for _ in range(model.num_feature())]
-    for f, t, cats in splits(model):
-        if cats is None:
-            values[f] += [t, np.nextafter(t, -np.inf), np.nextafter(t, np.inf)]
+    for s in splits(model):
+        if s.threshold is not None:
+            t = s.threshold
+            values[s.feature] += [t, np.nextafter(t, -np.inf), np.nextafter(t, np.inf)]
         else:
-            values[f] += [c + d for c in cats for d in (-1.0, -0.5, 0.0, 0.5, 1.0)]
+            values[s.feature] += [c + d for c in s.categories for d in (-1.0, -0.5, 0.0, 0.5, 1.0)]
     return [sorted(set(v), key=repr) for v in values]
 
 
