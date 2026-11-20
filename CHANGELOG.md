@@ -8,6 +8,7 @@ All notable changes to fastleaves. The format follows
 
 - Loading a model with a very deep tree (up to 32,767 levels, as LightGBM allows) no longer
   crashes: model trees are read and freed with loops instead of recursion.
+- The README's scope table states the existing limit of 32,768 leaves per tree.
 
 ## [0.4.0] - 2026-11-20
 

@@ -8,7 +8,7 @@ import pytest
 import scipy.sparse
 
 import fastleaves
-from cases import split_categories, split_thresholds, thresholds_model, train
+from cases import random_model_file, random_tree, split_categories, split_thresholds, thresholds_model, train
 
 UnsupportedError = fastleaves.UnsupportedError
 
@@ -37,6 +37,14 @@ def many_thresholds_model():
     return model
 
 
+def many_leaves_model():
+    """A tree with 32,769 leaves, one more than supported (LightGBM allows up to 131,072)."""
+    tree = random_tree(np.random.default_rng(0), 0, 32_769, {0: "num"}, {0: 0}, {0: np.arange(254.0)})
+    text = random_model_file(1, [tree])
+    lightgbm.Booster(model_str=text)  # LightGBM loads it
+    return text
+
+
 def old_version_model():
     return train("regression", "numeric", "default").model_to_string().replace("version=v4", "version=v3")
 
@@ -45,6 +53,7 @@ MODELS = {
     "more than 256 features used in splits": wide_model,
     "more than 255 categories on one feature": many_categories_model,
     "more than 254 thresholds per feature": many_thresholds_model,
+    "more than 32,768 leaves in a tree": many_leaves_model,
     "multiclass": lambda: train("multiclass", "numeric", "default"),
     "random forest mode": lambda: train("regression", "numeric", "random forest"),
     "linear trees": lambda: train("regression", "numeric", "linear trees"),
