@@ -45,7 +45,7 @@ with LightGBM's message.
 | Predict options | default; raw_score; num_iteration; start_iteration + num_iteration; start after the last iteration; 1 thread; pred_leaf; pred_leaf with start_iteration + num_iteration |
 
 13 × 8 × 8 × 8 = 6,656 cases, of which 160 are combinations LightGBM cannot train.
-They run in about 90 s. `validate_features` is tested in `test_inputs.py` (it only checks
+They run in about 100 s. `validate_features` is tested in `test_inputs.py` (it only checks
 DataFrame column names).
 
 ### Planned

@@ -71,16 +71,16 @@ TRAINING = {
 
 
 def features(rng, n, data):
-    """`n` rows of the dataset `data` (few distinct values, so models stay in v0.1 limits)."""
+    """`n` rows of the dataset `data`."""
     x = np.column_stack(
         [
-            rng.normal(size=n).round(1),
-            rng.normal(size=n).round(1),
-            rng.uniform(-1, 1, n).round(2),
-            rng.exponential(size=n).round(1),
+            rng.normal(size=n),
+            rng.normal(size=n),
+            rng.uniform(-1, 1, n),
+            rng.exponential(size=n),
             rng.integers(0, 10, n),
             rng.integers(0, data.categories, n),
-            *(np.full(n, 1.0) if i % 10 == 0 else rng.normal(size=n).round(1) for i in range(data.extra)),
+            *(np.full(n, 1.0) if i % 10 == 0 else rng.normal(size=n) for i in range(data.extra)),
         ]
     ).astype(float)
     x[:, 5] *= data.category_step
