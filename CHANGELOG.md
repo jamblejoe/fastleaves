@@ -6,6 +6,9 @@ All notable changes to fastleaves. The format follows
 
 ## [Unreleased]
 
+- `binary` and `cross_entropy` models predict probabilities (were raw scores only). A
+  `binary` model's sigmoid is read from the model file exactly as LightGBM reads it.
+
 ## [0.4.0] - 2026-11-20
 
 - Numerical features may have up to 254 thresholds in the model's splits (was 253), so

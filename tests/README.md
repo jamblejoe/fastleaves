@@ -29,7 +29,7 @@ fast kernel is not used.
 | File | What it checks |
 |---|---|
 | `test_parity.py` | The parity matrix: objective × dataset × training × predict options. |
-| `test_inputs.py` | Input forms (dtypes, layouts, lists, DataFrames, pandas categories), 255 categories on one feature (every category and unseen ones), 254 thresholds on one feature next to 255 categories (each missing-value mode, every threshold and its neighbors), batch sizes (also with 100 features), models with many unused features, thread counts (also with `pred_leaf`), model files, early stopping, `validate_features`, generated rows (hypothesis). |
+| `test_inputs.py` | Input forms (dtypes, layouts, lists, DataFrames, pandas categories), 255 categories on one feature (every category and unseen ones), 254 thresholds on one feature next to 255 categories (each missing-value mode, every threshold and its neighbors), `binary` sigmoids in the model file (including ones LightGBM's number parser reads one double off), batch sizes (also with 100 features), models with many unused features, thread counts (also with `pred_leaf`), model files, early stopping, `validate_features`, generated rows (hypothesis). |
 | `test_refusals.py` | One test for each refusal in the scope table. |
 | `cases.py` | The datasets, objectives, training settings and test rows the tests share. |
 
@@ -47,7 +47,7 @@ with LightGBM's message.
 
 | Dimension | Values |
 |---|---|
-| Objective | regression, regression_l1, huber, fair, quantile, mape, poisson, gamma, tweedie; binary, cross_entropy, sqrt regression (raw scores only); multiclass (refused) |
+| Objective | regression, regression_l1, huber, fair, quantile, mape, poisson, gamma, tweedie, binary, cross_entropy; sqrt regression (raw scores only); multiclass (refused) |
 | Dataset | numeric; with NaN (missing type NaN); NaN with `use_missing=False` (type None); zero as missing (type Zero); categorical columns with NaN; large category IDs (0 to 29,000); many categories (about 170 in one feature's splits, next to one with 10); 100 features (two categorical, every tenth of the others constant; most are used in splits) |
 | Training | default; deep trees; dart; goss; extra trees; no boost from average; linear trees (refused); random forest (refused) |
 | Predict options | default; raw_score; num_iteration; start_iteration + num_iteration; start after the last iteration; 1 thread; pred_leaf; pred_leaf with start_iteration + num_iteration |
@@ -62,7 +62,7 @@ To be added to the matrix as features land or as more coverage is wanted.
 
 | Dimension | Planned values |
 |---|---|
-| Objective | lambdarank, rank_xendcg (need query groups); binary/cross_entropy probabilities; multiclass, multiclassova; custom objective (no transformation) |
+| Objective | lambdarank, rank_xendcg (need query groups); multiclass, multiclassova; custom objective (no transformation) |
 | Model shape | more than 254 thresholds (16-bit bins); single-leaf trees |
 | Training | monotone and interaction constraints; forced splits; path smoothing; `max_bin` 2 / 15 / 1023; categorical parameters (`max_cat_threshold`, `cat_smooth`, `max_cat_to_onehot`); `init_model` (continued training); `refit` |
 | Predict options | `pred_early_stop`; `predict_disable_shape_check` |

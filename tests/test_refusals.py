@@ -62,12 +62,21 @@ def test_unsupported_model_fails_to_load(model):
             fastleaves.Booster.from_lightgbm(model)
 
 
-OUTPUTS = ["binary", "cross_entropy", "sqrt regression"]
+def cross_entropy_lambda_model():
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(1000, 6))
+    return lightgbm.train({"verbose": -1, "objective": "cross_entropy_lambda"}, lightgbm.Dataset(x, rng.random(1000)), 5)
+
+
+OUTPUTS = {
+    "sqrt regression": lambda: train("sqrt regression", "numeric", "default"),
+    "cross_entropy_lambda": cross_entropy_lambda_model,
+}
 
 
 @pytest.mark.parametrize("objective", OUTPUTS)
 def test_unsupported_output_needs_raw_score(objective):
-    booster = fastleaves.Booster.from_lightgbm(train(objective, "numeric", "default"))
+    booster = fastleaves.Booster.from_lightgbm(OUTPUTS[objective]())
     x = np.zeros((3, 6))
     with pytest.raises(UnsupportedError):
         booster.predict(x)

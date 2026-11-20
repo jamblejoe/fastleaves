@@ -13,6 +13,8 @@ use std::str::FromStr;
 pub enum Output {
     Identity,
     Exp,
+    /// `1 / (1 + exp(-sigmoid * score))`, for `binary` and `cross_entropy` (sigmoid 1).
+    Sigmoid(f64),
 }
 
 pub struct Model {
@@ -42,6 +44,10 @@ impl Model {
         let n_features = number::<usize>(get("max_feature_idx")?)? + 1;
         let feature_names = get("feature_names")?.split(' ').map(String::from).collect();
         let objective = header.get("objective").copied().unwrap_or("none").to_string();
+        let output = output(&objective);
+        if let Err(e @ Error::Invalid(_)) = &output {
+            return Err(e.clone()); // LightGBM does not load such a model either
+        }
 
         let mut trees = vec![];
         for block in blocks.take_while(|b| *b != "end of trees") {
@@ -49,12 +55,7 @@ impl Model {
                 trees.push(parse_tree(block)?);
             }
         }
-        Ok(Model {
-            forest: Forest::new(n_features, &trees)?,
-            feature_names,
-            output: output(&objective),
-            objective,
-        })
+        Ok(Model { forest: Forest::new(n_features, &trees)?, feature_names, output, objective })
     }
 
     /// Predictions for the row-major matrix `x` from `trees`, or raw scores if `raw_score`.
@@ -68,8 +69,10 @@ impl Model {
     ) -> Result<(), Error> {
         let output = if raw_score { Output::Identity } else { self.output.clone()? };
         self.forest.predict_raw(x, out, trees);
-        if output == Output::Exp {
-            out.iter_mut().for_each(|v| *v = v.exp());
+        match output {
+            Output::Identity => {}
+            Output::Exp => out.iter_mut().for_each(|v| *v = v.exp()),
+            Output::Sigmoid(s) => out.iter_mut().for_each(|v| *v = 1.0 / (1.0 + (-s * *v).exp())),
         }
         Ok(())
     }
@@ -81,7 +84,68 @@ fn output(objective: &str) -> Result<Output, Error> {
         "regression" if words.any(|w| w == "sqrt") => Err(Error::unsupported("output of sqrt regression")),
         "regression" | "regression_l1" | "huber" | "fair" | "quantile" | "mape" => Ok(Output::Identity),
         "poisson" | "gamma" | "tweedie" => Ok(Output::Exp),
+        "cross_entropy" => Ok(Output::Sigmoid(1.0)),
+        "binary" => {
+            let sigmoid = words.find_map(|w| w.strip_prefix("sigmoid:")).map(lightgbm_atof);
+            match sigmoid {
+                Some(s) if s > 0.0 => Ok(Output::Sigmoid(s)),
+                _ => Err(invalid(format!("objective {objective:?} without a positive sigmoid"))),
+            }
+        }
         name => Err(Error::unsupported(format!("output of objective {name}"))),
+    }
+}
+
+/// LightGBM's `Common::Atof`, with which it reads the sigmoid. It is not correctly rounded
+/// (`2.3892` is one double off), so `str::parse` would change some probabilities.
+fn lightgbm_atof(s: &str) -> f64 {
+    let (b, mut i) = (s.as_bytes(), 0);
+    let sign = if b.first() == Some(&b'-') { -1.0 } else { 1.0 };
+    if matches!(b.first(), Some(b'-' | b'+')) {
+        i += 1;
+    }
+    let mut value = digits(b, &mut i).iter().fold(0.0, |v, &d| v * 10.0 + f64::from(d));
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        let fraction = digits(b, &mut i);
+        value += fraction.iter().fold(0.0, |r, &d| f64::from(d) + r * 10.0) / pow(10.0, fraction.len());
+    }
+    let (mut scale, mut divide) = (1.0, false);
+    if matches!(b.get(i), Some(b'e' | b'E')) {
+        i += 1;
+        divide = b.get(i) == Some(&b'-');
+        if matches!(b.get(i), Some(b'-' | b'+')) {
+            i += 1;
+        }
+        let mut e =
+            digits(b, &mut i).iter().fold(0u32, |e, &d| e.saturating_mul(10).saturating_add(d.into()));
+        e = e.min(308);
+        for (step, factor) in [(50, 1e50), (8, 1e8), (1, 10.0)] {
+            while e >= step {
+                scale *= factor;
+                e -= step;
+            }
+        }
+    }
+    sign * if divide { value / scale } else { value * scale }
+}
+
+/// The values of the decimal digits at `b[*i..]`, moving `i` past them.
+fn digits(b: &[u8], i: &mut usize) -> Vec<u8> {
+    let start = *i;
+    while b.get(*i).is_some_and(u8::is_ascii_digit) {
+        *i += 1;
+    }
+    b[start..*i].iter().map(|d| d - b'0').collect()
+}
+
+/// LightGBM's `Common::Pow`, which `lightgbm_atof` uses.
+fn pow(base: f64, n: usize) -> f64 {
+    match n {
+        0 => 1.0,
+        _ if n.is_multiple_of(2) => pow(base * base, n / 2),
+        _ if n.is_multiple_of(3) => pow(base * base * base, n / 3),
+        _ => base * pow(base, n - 1),
     }
 }
 
@@ -285,13 +349,34 @@ shrinkage=1";
             ("quantile", Some(Output::Identity)),
             ("poisson", Some(Output::Exp)),
             ("tweedie tweedie_variance_power:1.3", Some(Output::Exp)),
+            ("binary sigmoid:1", Some(Output::Sigmoid(1.0))),
+            ("binary sigmoid:0.5", Some(Output::Sigmoid(0.5))),
+            ("cross_entropy", Some(Output::Sigmoid(1.0))),
             ("regression sqrt", None),
-            ("binary sigmoid:1", None),
+            ("cross_entropy_lambda", None),
             ("lambdarank", None),
             ("none", None),
         ];
         for (objective, expected) in cases {
             assert_eq!(output(objective).ok(), expected, "{objective}");
+        }
+    }
+
+    #[test]
+    fn sigmoid_output() {
+        let m = Model::parse(&set(&model(&[TREE]), "objective", Some("binary sigmoid:0.5"))).unwrap();
+        let p = |s: f64| 1.0 / (1.0 + (-0.5 * s).exp());
+        assert_eq!(predict(&m, &[0.2, 1.0, 0.7, 1.0], false), [p(1.0), p(3.0)]);
+    }
+
+    #[test]
+    fn reads_the_sigmoid_as_lightgbm_does() {
+        // LightGBM's reading differs from the correctly rounded one by a double for "2.3892"
+        assert_eq!(lightgbm_atof("2.3892"), f64::from_bits("2.3892".parse::<f64>().unwrap().to_bits() - 1));
+        let cases =
+            [("1", 1.0), ("0.5", 0.5), ("+2", 2.0), ("-1.5", -1.5), ("1e-07", 1e-7), ("2.5E+3", 2500.0)];
+        for (s, expected) in cases {
+            assert_eq!(lightgbm_atof(s), expected, "{s}");
         }
     }
 
@@ -328,6 +413,8 @@ shrinkage=1";
             ("unknown missing type", tree("decision_type", Some("14 1"))),
             ("category set out of range", tree("threshold", Some("0.5 4"))),
             ("feature out of range", tree("split_feature", Some("0 7"))),
+            ("binary without sigmoid", set(&model(&[TREE]), "objective", Some("binary"))),
+            ("binary with sigmoid 0", set(&model(&[TREE]), "objective", Some("binary sigmoid:0"))),
         ];
         for (what, text) in cases {
             assert!(matches!(Model::parse(&text), Err(Error::Invalid(_))), "{what}");
