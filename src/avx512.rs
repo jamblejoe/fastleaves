@@ -6,7 +6,7 @@
 //! so the work follows the average path length instead of the deepest of 16 rows.
 //! Four groups of 16 lanes are interleaved to hide gather latency.
 
-use crate::forest::{BLOCK, BLOCK_BITS, CAT, DEFAULT_LEFT, LEAF, MISSING};
+use crate::forest::{BLOCK, BLOCK_BITS, CAT, DEFAULT_LEFT, LEAF, MISSING, SET_WORDS_BITS, WIDE};
 use std::arch::x86_64::*;
 
 /// Proof that the CPU has AVX-512F and BMI2.
@@ -23,13 +23,15 @@ impl Avx512 {
     }
 
     /// Sets `leaf_of[r]` to the leaf that row `r` of the binned block `bins` reaches. `tree`
-    /// must be a packed tree from `Forest` whose root is not a leaf, and `bins` must have
-    /// `BLOCK` bytes for each slot it splits on and 3 bytes after them.
-    pub fn leaves(self, tree: &[u64], bins: &[u8], leaf_of: &mut [u32]) {
+    /// must be a packed tree from `Forest` whose root is not a leaf, `sets` that forest's
+    /// category sets, and `bins` must have `BLOCK` bytes for each slot it splits on and 3 bytes
+    /// after them.
+    pub fn leaves(self, tree: &[u64], sets: &[u32], bins: &[u8], leaf_of: &mut [u32]) {
         assert!(leaf_of.len() <= BLOCK);
         // SAFETY: CPU features are checked by `detect`; rows are below `BLOCK` (above); node
-        // indices and slots are valid by construction of the packed tree and its bins.
-        unsafe { leaves(tree, bins, leaf_of) }
+        // indices, slots and set indices are valid by construction of the packed tree, its sets
+        // and its bins; a bin (< 256) picks one of the `SET_WORDS` words of a set.
+        unsafe { leaves(tree, sets, bins, leaf_of) }
     }
 }
 
@@ -43,7 +45,7 @@ struct Lanes {
 }
 
 #[target_feature(enable = "avx512f,bmi2")]
-unsafe fn leaves(tree: &[u64], bins: &[u8], leaf_of: &mut [u32]) {
+unsafe fn leaves(tree: &[u64], sets: &[u32], bins: &[u8], leaf_of: &mut [u32]) {
     let root = Lanes {
         lo: _mm512_set1_epi32(tree[0] as i32),
         hi: _mm512_set1_epi32((tree[0] >> 32) as i32),
@@ -59,10 +61,10 @@ unsafe fn leaves(tree: &[u64], bins: &[u8], leaf_of: &mut [u32]) {
             g.refill(&root, 0xFFFF, n, &mut next);
         }
         while (a.active | b.active | c.active | d.active) != 0 {
-            a.step(&root, tree, bins, leaf_of, n, &mut next);
-            b.step(&root, tree, bins, leaf_of, n, &mut next);
-            c.step(&root, tree, bins, leaf_of, n, &mut next);
-            d.step(&root, tree, bins, leaf_of, n, &mut next);
+            a.step(&root, tree, sets, bins, leaf_of, n, &mut next);
+            b.step(&root, tree, sets, bins, leaf_of, n, &mut next);
+            c.step(&root, tree, sets, bins, leaf_of, n, &mut next);
+            d.step(&root, tree, sets, bins, leaf_of, n, &mut next);
         }
     }
 }
@@ -70,10 +72,12 @@ unsafe fn leaves(tree: &[u64], bins: &[u8], leaf_of: &mut [u32]) {
 impl Lanes {
     /// Moves every active lane one level down; lanes that reach a leaf record it and refill.
     #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
     unsafe fn step(
         &mut self,
         root: &Lanes,
         tree: &[u64],
+        sets: &[u32],
         bins: &[u8],
         leaf_of: &mut [u32],
         n: i32,
@@ -88,7 +92,8 @@ impl Lanes {
             let zero = _mm512_setzero_si512();
             // left iff bin <= threshold (never for MISSING > any threshold bin), or the bin is
             // MISSING and the default is left; categorical: bit `bin` of the set (0 if bin >= 32).
-            // `hi` is the threshold bin of a numerical split and the set of a categorical one.
+            // `hi` is the threshold bin of a numerical split and the set of a categorical one;
+            // WIDE: bit `bin % 32` of word `bin / 32` of set number `hi` in `sets`.
             let slot = _mm512_and_si512(self.lo, set(0xFF));
             let first = _mm512_and_si512(_mm512_srli_epi32::<8>(self.lo), set(0xFFFF));
             let at = _mm512_add_epi32(_mm512_slli_epi32::<BLOCK_BITS>(slot), self.row);
@@ -101,7 +106,16 @@ impl Lanes {
                 set(DEFAULT_LEFT),
             );
             let num_left = _mm512_cmple_epu32_mask(d, self.hi) | default_left;
-            let cat_left = _mm512_test_epi32_mask(_mm512_srlv_epi32(self.hi, d), set(1));
+            let wide = _mm512_mask_test_epi32_mask(act, self.lo, set(WIDE));
+            let (word, shift) = if wide == 0 {
+                (self.hi, d)
+            } else {
+                let at =
+                    _mm512_add_epi32(_mm512_slli_epi32::<SET_WORDS_BITS>(self.hi), _mm512_srli_epi32::<5>(d));
+                let w = _mm512_mask_i32gather_epi32::<4>(self.hi, wide, at, sets.as_ptr().cast());
+                (w, _mm512_mask_and_epi32(d, wide, d, set(31)))
+            };
+            let cat_left = _mm512_test_epi32_mask(_mm512_srlv_epi32(word, shift), set(1));
             let right = !((num_left & !cat) | (cat_left & cat));
             let child = _mm512_mask_add_epi32(first, right, first, set(1));
 

@@ -11,7 +11,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 import fastleaves
-from cases import DATASETS, assert_bit_identical, edge_values, features, train
+from cases import DATASETS, assert_bit_identical, edge_values, features, split_categories, train
 
 MODEL = "poisson", "with NaN", "default"
 
@@ -123,6 +123,22 @@ def test_best_iteration_from_early_stopping():
     )
     assert 0 < model.best_iteration < 200
     check(model, x)
+
+
+@pytest.mark.parametrize("pred_leaf", [False, True], ids=["predictions", "pred_leaf"])
+def test_255_categories_on_one_feature(pred_leaf):
+    """The most categories supported, next to a feature with few (set kept in the node)."""
+    rng = np.random.default_rng(5)
+    n = 50_000
+    x = np.column_stack([rng.integers(0, 256, n), rng.integers(0, 8, n), rng.normal(size=n)]).astype(float)
+    y = rng.normal(size=256)[x[:, 0].astype(int)] + rng.normal(size=8)[x[:, 1].astype(int)] + x[:, 2]
+    params = {"verbose": -1, "min_data_per_group": 5, "cat_smooth": 1, "max_cat_threshold": 128, "max_bin": 1023}
+    model = lightgbm.train(params, lightgbm.Dataset(x, y, categorical_feature=[0, 1]), 20)
+    assert len(split_categories(model, 0)) == 255
+    assert len(split_categories(model, 1)) <= 32
+    test = np.tile(x[:1], (2 * 260 + 1, 1))
+    test[:, 0] = [*(c + d for c in range(-1, 259) for d in (0.0, 0.5)), np.nan]  # every category, unseen ones
+    check(model, np.vstack([test, x[:1000]]), pred_leaf=pred_leaf)
 
 
 def test_pandas_categorical_columns():

@@ -21,7 +21,7 @@ fast kernel is not used.
 | File | What it checks |
 |---|---|
 | `test_parity.py` | The parity matrix: objective × dataset × training × predict options. |
-| `test_inputs.py` | Input forms (dtypes, layouts, lists, DataFrames, pandas categories), batch sizes (also with 100 features), models with many unused features, thread counts (also with `pred_leaf`), model files, early stopping, `validate_features`, generated rows (hypothesis). |
+| `test_inputs.py` | Input forms (dtypes, layouts, lists, DataFrames, pandas categories), 255 categories on one feature (every category and unseen ones), batch sizes (also with 100 features), models with many unused features, thread counts (also with `pred_leaf`), model files, early stopping, `validate_features`, generated rows (hypothesis). |
 | `test_refusals.py` | One test for each refusal in the scope table. |
 | `cases.py` | The datasets, objectives, training settings and test rows the tests share. |
 
@@ -29,8 +29,8 @@ fast kernel is not used.
 
 Each test trains a small LightGBM model (1,000 rows, 20 trees, cached). It then predicts
 on 1,000 unseen rows plus edge rows. In an edge row, one feature takes one of: NaN, ±inf,
-±0, values around LightGBM's zero threshold (±1e-35f), categories −1 to 33 and fractions
-of them, huge values, **every split threshold of the model along with the next double
+±0, values around LightGBM's zero threshold (±1e-35f), categories −1 to 33, 199, 200 and
+254 to 256 and fractions of them, huge values, **every split threshold of the model along with the next double
 below and above it**, and every category in the model's splits with its neighbors (±0.5, ±1). `why_unsupported` in `test_parity.py` decides from the scope table
 whether a case must match or be refused. Combinations LightGBM cannot train are skipped
 with LightGBM's message.
@@ -40,12 +40,12 @@ with LightGBM's message.
 | Dimension | Values |
 |---|---|
 | Objective | regression, regression_l1, huber, fair, quantile, mape, poisson, gamma, tweedie; binary, cross_entropy, sqrt regression (raw scores only); multiclass (refused) |
-| Dataset | numeric; with NaN (missing type NaN); NaN with `use_missing=False` (type None); zero as missing (type Zero); categorical columns with NaN; large category IDs (0 to 29,000); 100 features (two categorical, every tenth of the others constant; most are used in splits) |
+| Dataset | numeric; with NaN (missing type NaN); NaN with `use_missing=False` (type None); zero as missing (type Zero); categorical columns with NaN; large category IDs (0 to 29,000); many categories (about 170 in one feature's splits, next to one with 10); 100 features (two categorical, every tenth of the others constant; most are used in splits) |
 | Training | default; deep trees; dart; goss; extra trees; no boost from average; linear trees (refused); random forest (refused) |
 | Predict options | default; raw_score; num_iteration; start_iteration + num_iteration; start after the last iteration; 1 thread; pred_leaf; pred_leaf with start_iteration + num_iteration |
 
-13 × 7 × 8 × 8 = 5,824 cases, of which about 150 are combinations LightGBM cannot train.
-They run in about 75 s. `validate_features` is tested in `test_inputs.py` (it only checks
+13 × 8 × 8 × 8 = 6,656 cases, of which 160 are combinations LightGBM cannot train.
+They run in about 90 s. `validate_features` is tested in `test_inputs.py` (it only checks
 DataFrame column names).
 
 ### Planned
@@ -55,7 +55,7 @@ To be added to the matrix as features land or as more coverage is wanted.
 | Dimension | Planned values |
 |---|---|
 | Objective | lambdarank, rank_xendcg (need query groups); binary/cross_entropy probabilities; multiclass, multiclassova; custom objective (no transformation) |
-| Model shape | more than 32 categories per feature; more than 253 thresholds (16-bit bins); single-leaf trees |
+| Model shape | more than 253 thresholds (16-bit bins); single-leaf trees |
 | Training | monotone and interaction constraints; forced splits; path smoothing; `max_bin` 2 / 15 / 1023; categorical parameters (`max_cat_threshold`, `cat_smooth`, `max_cat_to_onehot`); `init_model` (continued training); `refit` |
 | Predict options | `pred_early_stop`; `predict_disable_shape_check` |
 | Inputs | sparse matrices; pyarrow and polars tables |

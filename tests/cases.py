@@ -36,7 +36,8 @@ class Data:
     nan: float = 0.0  # share of NaN values
     zeros: float = 0.0  # share of exact zeros
     categorical: tuple = ()
-    category_step: int = 1  # feature 5 takes the values 0, step, 2 * step, ...
+    categories: int = 30  # feature 5 takes `categories` values: 0, step, 2 * step, ...
+    category_step: int = 1
     extra: int = 0  # more numerical features
     params: dict = field(default_factory=dict)  # LightGBM parameters this data needs
 
@@ -48,6 +49,10 @@ DATASETS = {
     "zero as missing": Data(zeros=0.2, params={"zero_as_missing": True}),
     "categorical": Data(nan=0.05, categorical=(4, 5)),
     "large category IDs": Data(nan=0.05, categorical=(4, 5), category_step=1000),
+    # feature 4 keeps its set in the node, feature 5 (about 170 categories in splits) in a table
+    "many categories": Data(
+        nan=0.05, categorical=(4, 5), categories=200, params={"min_data_per_group": 5, "cat_smooth": 1}
+    ),
     "100 features": Data(nan=0.05, categorical=(4, 5), extra=94),
 }
 
@@ -72,7 +77,7 @@ def features(rng, n, data):
             rng.uniform(-1, 1, n).round(2),
             rng.exponential(size=n).round(1),
             rng.integers(0, 10, n),
-            rng.integers(0, 30, n),
+            rng.integers(0, data.categories, n),
             *(np.full(n, 1.0) if i % 10 == 0 else rng.normal(size=n).round(1) for i in range(data.extra)),
         ]
     ).astype(float)
@@ -113,26 +118,38 @@ def train(objective, dataset, training):
 ZERO = float(np.float32(1e-35))  # LightGBM reads inputs within ±ZERO as 0
 EDGE_VALUES = [np.nan, np.inf, -np.inf, 0.0, -0.0, ZERO, -ZERO, np.nextafter(ZERO, 1), np.nextafter(-ZERO, -1),
                1e-36, -1e-36, 5e-324, -0.5, -0.99, -1.0, 0.5, 31.0, 31.5, 32.0, 2.0**31, -(2.0**31) - 1, 1e300, -1e300]
-CATEGORIES = [c + d for c in range(-1, 34) for d in (0.0, 0.5)]
+CATEGORIES = [c + d for c in [*range(-1, 34), 199, 200, 254, 255, 256] for d in (0.0, 0.5)]
 
 
-def edge_values(model):
-    """Per feature: EDGE_VALUES, every category up to 33, each split threshold with its
-    neighboring doubles, and each category of a split with its neighbors."""
-    values = [EDGE_VALUES + CATEGORIES for _ in range(model.num_feature())]
+def splits(model):
+    """(feature, numerical threshold or None, categories that go left or None) of each split."""
     for block in model.model_to_string().split("\n\n"):
         tree = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
         if "split_feature" not in tree:
             continue
         for f, t, d in zip(*(tree[k].split() for k in ("split_feature", "threshold", "decision_type"))):
             if int(d) & 1 == 0:  # numerical split
-                t = float(t)
-                values[int(f)] += [t, np.nextafter(t, -np.inf), np.nextafter(t, np.inf)]
+                yield int(f), float(t), None
             else:  # categorical: the threshold indexes a bitset of the categories that go left
                 b = [int(v) for v in tree["cat_boundaries"].split()][int(t) : int(t) + 2]
                 words = [int(w) for w in tree["cat_threshold"].split()[b[0] : b[1]]]
-                cats = [32 * i + k for i, w in enumerate(words) for k in range(32) if w >> k & 1]
-                values[int(f)] += [c + d for c in cats for d in (-1.0, -0.5, 0.0, 0.5, 1.0)]
+                yield int(f), None, [32 * i + k for i, w in enumerate(words) for k in range(32) if w >> k & 1]
+
+
+def split_categories(model, feature):
+    """The categories in any of the model's splits on `feature`."""
+    return {c for f, _, cats in splits(model) if f == feature and cats for c in cats}
+
+
+def edge_values(model):
+    """Per feature: EDGE_VALUES, every category up to 33 and some above, each split threshold
+    with its neighboring doubles, and each category of a split with its neighbors."""
+    values = [EDGE_VALUES + CATEGORIES for _ in range(model.num_feature())]
+    for f, t, cats in splits(model):
+        if cats is None:
+            values[f] += [t, np.nextafter(t, -np.inf), np.nextafter(t, np.inf)]
+        else:
+            values[f] += [c + d for c in cats for d in (-1.0, -0.5, 0.0, 0.5, 1.0)]
     return [sorted(set(v), key=repr) for v in values]
 
 

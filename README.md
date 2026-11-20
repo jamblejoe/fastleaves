@@ -29,7 +29,7 @@ small batches work but are not optimized.
 | | Supported | Raises an error |
 |---|---|---|
 | Model files | LightGBM 4.x | older versions |
-| Splits | numerical; categorical with up to 32 distinct categories per feature (any category IDs) | more than 32 categories on one feature |
+| Splits | numerical; categorical with up to 255 distinct categories per feature (any category IDs) | more than 255 categories on one feature |
 | Size | up to 256 features used in splits (any number of input columns), 253 thresholds per feature | larger models |
 | Missing values | all modes (`None`, `NaN`, `Zero`) | |
 | Output | `regression`, `regression_l1`, `huber`, `fair`, `quantile`, `mape`, `poisson`, `gamma`, `tweedie`; any single-output objective with `raw_score=True` | `binary`/`cross_entropy` probabilities, `sqrt` regression, random-forest mode, multiclass, linear trees |
@@ -40,7 +40,7 @@ small batches work but are not optimized.
 NaN, ±inf, ±0 and unseen categories behave as in LightGBM. `predict` releases the GIL.
 
 Not planned: training, SHAP, GPU, XGBoost/CatBoost models, single-row latency.
-Next: models with more categories and thresholds, then `binary` probabilities and multiclass.
+Next: models with more thresholds, then `binary` probabilities and multiclass.
 
 ## Performance
 

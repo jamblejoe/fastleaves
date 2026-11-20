@@ -11,9 +11,13 @@
 //! slot `s` and row `r` is at `s * BLOCK + r`, so a tree reads only the slots it splits on.
 //!
 //! Each node is one `u64`. Low half: slot (bits 0..8), index of the first child (8..24), flags
-//! `CAT`, `LEAF`, `DEFAULT_LEFT`. High half: the threshold bin of a numerical split, the bitset
-//! of the category positions that go left, or LightGBM's index of a leaf. Children are
+//! `WIDE`, `CAT`, `LEAF`, `DEFAULT_LEFT`. High half: the threshold bin of a numerical split, the
+//! bitset of the category positions that go left, or LightGBM's index of a leaf. Children are
 //! adjacent, so the next node is `first + go_right`.
+//!
+//! A feature with more than 32 categories marks its splits `CAT | WIDE`: their high half is the
+//! index of their 256-bit set in `Forest::sets` (8 words). Category positions are at most 254,
+//! so bit 255 (`NO_CAT`) is never set and every bin indexes a word within the set.
 
 use crate::Error;
 use crate::avx512::Avx512;
@@ -23,7 +27,11 @@ use std::ops::Range;
 
 pub const MAX_FEATURES: usize = 256; // columns used in splits
 pub const MAX_THRESHOLDS: usize = 253;
-pub const MAX_CATEGORIES: usize = 32; // per feature
+pub const MAX_CATEGORIES: usize = 255; // per feature
+const INLINE_CATEGORIES: usize = 32; // more: the split's set is in `Forest::sets`
+pub(crate) const SET_WORDS: usize = 1 << SET_WORDS_BITS; // u32 words per set in `Forest::sets`
+pub(crate) const SET_WORDS_BITS: u32 = 3;
+pub(crate) const WIDE: u32 = 1 << 27;
 pub(crate) const CAT: u32 = 1 << 28;
 pub(crate) const LEAF: u32 = 1 << 29;
 pub(crate) const DEFAULT_LEFT: u32 = 1 << 30;
@@ -86,6 +94,7 @@ pub struct Forest {
     roots: Vec<usize>,
     nodes: Vec<u64>,
     leaves: Vec<f64>, // value of each leaf node, 0 for splits
+    sets: Vec<u32>,   // category sets of `WIDE` splits, `SET_WORDS` words each
 }
 
 impl Forest {
@@ -151,8 +160,15 @@ impl Forest {
             return Err(Error::unsupported(format!("{n} features used in splits, at most {MAX_FEATURES}")));
         }
         let features = columns.iter().map(|&f| features[f].clone()).collect();
-        let mut forest =
-            Forest { n_columns: n_features, columns, features, roots: vec![], nodes: vec![], leaves: vec![] };
+        let mut forest = Forest {
+            n_columns: n_features,
+            columns,
+            features,
+            roots: vec![],
+            nodes: vec![],
+            leaves: vec![],
+            sets: vec![],
+        };
         for tree in trees {
             forest.pack(tree)?;
         }
@@ -189,8 +205,18 @@ impl Forest {
                 Node::Cat { feature, cats, .. } => {
                     let s = self.columns.binary_search(feature).unwrap();
                     let Feature::Cat(all) = &self.features[s] else { unreachable!() };
-                    let set = cats.iter().fold(0u32, |m, c| m | 1 << all.binary_search(c).unwrap());
-                    (s as u32 | CAT, set)
+                    let positions = cats.iter().map(|c| all.binary_search(c).unwrap());
+                    if all.len() <= INLINE_CATEGORIES {
+                        (s as u32 | CAT, positions.fold(0, |m, p| m | 1 << p))
+                    } else {
+                        let at = self.sets.len();
+                        if at + SET_WORDS > i32::MAX as usize {
+                            return Err(Error::unsupported("too many categorical splits".into()));
+                        }
+                        self.sets.resize(at + SET_WORDS, 0);
+                        positions.for_each(|p| self.sets[at + p / 32] |= 1 << (p % 32));
+                        (s as u32 | CAT | WIDE, (at / SET_WORDS) as u32)
+                    }
                 }
             };
             if let Some((_, l, r)) = n.split() {
@@ -271,10 +297,10 @@ impl Forest {
                 if tree[0] as u32 & LEAF != 0 {
                     leaf_of.fill(0);
                 } else if let Some(s) = simd {
-                    s.leaves(tree, &bins, &mut leaf_of);
+                    s.leaves(tree, &self.sets, &bins, &mut leaf_of);
                 } else {
                     for (r, l) in leaf_of.iter_mut().enumerate() {
-                        *l = leaf_scalar(tree, &bins, r);
+                        *l = leaf_scalar(tree, &self.sets, &bins, r);
                     }
                 }
                 f(out, k, root, &leaf_of);
@@ -305,8 +331,9 @@ fn bin(feature: &Feature, v: f64) -> u8 {
     }
 }
 
-/// The node (counted from the root of `tree`) of the leaf that row `r` of the binned block reaches.
-fn leaf_scalar(tree: &[u64], bins: &[u8], r: usize) -> u32 {
+/// The node (counted from the root of `tree`) of the leaf that row `r` of the binned block reaches;
+/// `sets` holds the category sets of `WIDE` splits.
+fn leaf_scalar(tree: &[u64], sets: &[u32], bins: &[u8], r: usize) -> u32 {
     let mut n = 0;
     loop {
         let (lo, hi) = (tree[n] as u32, (tree[n] >> 32) as u32);
@@ -314,7 +341,9 @@ fn leaf_scalar(tree: &[u64], bins: &[u8], r: usize) -> u32 {
             return n as u32;
         }
         let d = bins[(lo & 0xFF) as usize * BLOCK + r];
-        let left = if lo & CAT != 0 {
+        let left = if lo & WIDE != 0 {
+            sets[hi as usize * SET_WORDS + d as usize / 32] >> (d % 32) & 1 == 1
+        } else if lo & CAT != 0 {
             hi.checked_shr(d as u32).is_some_and(|m| m & 1 == 1)
         } else if d == MISSING {
             lo & DEFAULT_LEFT != 0
@@ -338,7 +367,7 @@ mod tests {
             self.0 % n
         }
         fn value(&mut self) -> f64 {
-            const EDGE: [f64; 22] = [
+            const EDGE: [f64; 26] = [
                 0.0,
                 -0.0,
                 ZERO,
@@ -353,6 +382,10 @@ mod tests {
                 32.0,
                 33.0,
                 99.5,
+                249.0,
+                254.0,
+                255.0,
+                256.0,
                 65536.0,
                 2147483647.0,
                 2147483648.0,
@@ -364,22 +397,37 @@ mod tests {
             ];
             match self.next(4) {
                 0 => EDGE[self.next(EDGE.len() as u64) as usize],
-                1 => self.next(110) as f64 - 4.0,
+                1 => self.next(270) as f64 - 4.0,
                 _ => (self.next(4000) as f64 - 2000.0) / 100.0,
             }
         }
     }
 
-    /// Feature kinds of `n` columns: categorical, or numerical with one missing-value type.
-    fn kinds(rng: &mut Rng, n: usize) -> Vec<Option<Missing>> {
-        let all = [None, Some(Missing::None), Some(Missing::Zero), Some(Missing::NaN)];
-        (0..n).map(|_| all[rng.next(4) as usize]).collect()
+    #[derive(Clone, Copy)]
+    enum Kind {
+        /// Categorical: with all of `CATS` (wide), or only every eighth of them (32, inline).
+        Cat {
+            wide: bool,
+        },
+        Num(Missing),
+    }
+
+    /// Feature kinds of `n` columns.
+    fn kinds(rng: &mut Rng, n: usize) -> Vec<Kind> {
+        let all = [
+            Kind::Cat { wide: false },
+            Kind::Cat { wide: true },
+            Kind::Num(Missing::None),
+            Kind::Num(Missing::Zero),
+            Kind::Num(Missing::NaN),
+        ];
+        (0..n).map(|_| all[rng.next(5) as usize]).collect()
     }
 
     /// The categories of a categorical feature: small ones and some far apart.
     const CATS: [u32; MAX_CATEGORIES] = {
         let mut c = [0; MAX_CATEGORIES];
-        let big = [32, 33, 99, 65536, 2147483647];
+        let big = [255, 256, 1000, 65536, 2147483647];
         let mut i = 0;
         while i < MAX_CATEGORIES {
             c[i] = if i < MAX_CATEGORIES - 5 { i as u32 } else { big[i + 5 - MAX_CATEGORIES] };
@@ -389,7 +437,7 @@ mod tests {
     };
 
     /// A random tree that splits on the columns `used`.
-    fn tree(rng: &mut Rng, depth: u32, kinds: &[Option<Missing>], used: &[usize]) -> Node {
+    fn tree(rng: &mut Rng, depth: u32, kinds: &[Kind], used: &[usize]) -> Node {
         if depth == 0 || rng.next(5) == 0 {
             return Node::Leaf { value: rng.value().clamp(-5.0, 5.0) / 3.0, index: rng.next(1000) as u32 };
         }
@@ -397,11 +445,14 @@ mod tests {
         let (left, right) =
             (Box::new(tree(rng, depth - 1, kinds, used)), Box::new(tree(rng, depth - 1, kinds, used)));
         match kinds[feature] {
-            None => {
-                let cats = CATS.into_iter().filter(|_| rng.next(2) == 0).collect();
+            Kind::Cat { wide } => {
+                let cats = (0..MAX_CATEGORIES)
+                    .filter(|&i| (wide || i % 8 == 6) && rng.next(2) == 0)
+                    .map(|i| CATS[i])
+                    .collect();
                 Node::Cat { feature, cats, left, right }
             }
-            Some(missing) => {
+            Kind::Num(missing) => {
                 let threshold = match rng.next(10) {
                     0 => ZERO,
                     1 => -ZERO,
@@ -481,8 +532,9 @@ mod tests {
                         continue;
                     }
                     let mut got = vec![0; rows];
-                    simd.leaves(tree, &bins, &mut got);
-                    let want: Vec<u32> = (0..rows).map(|r| leaf_scalar(tree, &bins, r)).collect();
+                    simd.leaves(tree, &forest.sets, &bins, &mut got);
+                    let want: Vec<u32> =
+                        (0..rows).map(|r| leaf_scalar(tree, &forest.sets, &bins, r)).collect();
                     assert_eq!(got, want);
                 }
             }
