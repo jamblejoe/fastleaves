@@ -12,6 +12,13 @@ cargo test --release                            # kernel against a direct tree w
 
 The report header shows which kernel ran (`fastleaves kernel: avx512` or `scalar`).
 
+`pytest` runs on one worker per core (pytest-xdist, `-n auto` in `pyproject.toml`); `-n 0`
+runs it in one process, which is easier to debug. `conftest.py` sets `OMP_NUM_THREADS=1`
+unless it is already set, so the workers' LightGBM thread pools do not compete for the cores;
+LightGBM's predictions do not depend on its thread count, and tests that pass `num_threads`
+still set it. Each worker trains a model when it first needs it and caches it with its test
+rows (`functools.cache` in `cases.py`).
+
 GitHub's runners may lack AVX-512, so CI also runs the fast kernel on Intel's emulator (SDE,
 installed by `petarpetrovt/setup-sde`): the kernel tests on every push, the whole suite nightly
 (`.github/workflows/nightly.yml`). The release workflow runs the whole suite on both paths against the
@@ -45,7 +52,7 @@ with LightGBM's message.
 | Predict options | default; raw_score; num_iteration; start_iteration + num_iteration; start after the last iteration; 1 thread; pred_leaf; pred_leaf with start_iteration + num_iteration |
 
 13 × 8 × 8 × 8 = 6,656 cases, of which 160 are combinations LightGBM cannot train.
-They run in about 90 s. `validate_features` is tested in `test_inputs.py` (it only checks
+The whole suite takes about 20 s on four cores (about 55 s with `-n 0`). `validate_features` is tested in `test_inputs.py` (it only checks
 DataFrame column names).
 
 ### Planned

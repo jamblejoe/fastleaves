@@ -30,7 +30,7 @@ Issues = "https://github.com/jamblejoe/fastleaves/issues"
 Benchmarks = "https://github.com/jamblejoe/LGBMBench"
 
 [project.optional-dependencies]
-test = ["pytest", "hypothesis", "lightgbm>=4,<5", "pandas"]
+test = ["pytest", "pytest-xdist", "hypothesis", "lightgbm>=4,<5", "pandas"]
 
 [tool.maturin]
 python-source = "python"
@@ -39,3 +39,5 @@ features = ["python", "pyo3/extension-module", "pyo3/abi3-py311"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# one worker per core (pytest-xdist); `-n 0` runs in one process
+addopts = "-n auto"

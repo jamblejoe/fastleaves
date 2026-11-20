@@ -1,5 +1,10 @@
 import os
 
+# One OpenMP thread per worker, set before LightGBM loads OpenMP: with one pool of all cores
+# per pytest-xdist worker, the pools spin against each other and the suite slows to a crawl.
+# Predict options and tests that set num_threads still set it explicitly.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 import lightgbm
 
 import fastleaves
