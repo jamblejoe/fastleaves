@@ -30,7 +30,9 @@ A nightly mutation test checks the tests themselves. cargo-mutants changes the R
 place at a time (`<` to `<=`, a function body to a constant, ...) and runs the Rust tests, the
 kernel on the emulator; `tests/mutants.py` runs pytest (scalar path) on each change they miss.
 Some test must fail for every change, except those listed with the reason in
-`tests/mutants-survivors.txt` (equivalent changes and unreachable checks). Locally (the
+`tests/mutants-survivors.txt` (equivalent changes and unreachable checks). A failing nightly
+run opens an issue "Nightly mutation test failed", or comments on the open one, with the new
+survivors; the maintainer decides for each: a test that catches it, or an entry in the list. Locally (the
 first command fails when it misses mutants; the second judges them):
 
 ```bash

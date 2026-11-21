@@ -35,10 +35,14 @@ jobs:
   # Mutation test: cargo-mutants changes the Rust code in one place at a time (`<` to `<=`, a
   # function body to a constant, ...), and some test must fail for each change. Stage 1: the
   # Rust tests, the kernel on the emulator. Stage 2 (tests/mutants.py): pytest, scalar path,
-  # on the mutants stage 1 misses. Fails when more survive than tests/mutants-survivors.txt lists.
+  # on the mutants stage 1 misses. Fails when more survive than tests/mutants-survivors.txt lists,
+  # and then opens an issue (or comments on the open one) so the failure is seen.
   mutants:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -62,9 +66,30 @@ jobs:
         env:
           FASTLEAVES_ISA: scalar
           FASTLEAVES_REQUIRE_AVX512: "" # set for the whole workflow; the scalar path is wanted here
-        run: python tests/mutants.py mutants.out/outcomes.json | tee mutants.out/pytest.txt
+        run: python tests/mutants.py mutants.out/outcomes.json 2>&1 | tee mutants.out/pytest.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: mutants
           path: mutants.out
+      # For each new survivor the maintainer decides: a test that catches it, or an entry in
+      # tests/mutants-survivors.txt with the reason. Not for runs on pull requests.
+      - name: Issue on failure
+        if: failure() && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Nightly mutation test failed"
+          survivors=$(sed -n '/^More than/,$p' mutants.out/pytest.txt 2>/dev/null || true)
+          body="Run: $RUN
+
+          ${survivors:-The job failed before judging the survivors (build, baseline or timeout); see the run.}
+
+          For each new survivor: add a test that catches it, or add it to \`tests/mutants-survivors.txt\` with the reason."
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi
