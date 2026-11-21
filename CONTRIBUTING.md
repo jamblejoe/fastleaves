@@ -39,10 +39,10 @@ Intel's emulator (see [tests/README.md](tests/README.md)).
   change updates the scope table, the tests and the changelog together.
 - Speed claims cite an [LGBMBench](https://github.com/jamblejoe/LGBMBench) run.
 - Prefer less code. No new dependencies without a reason in the commit message.
+  `unsafe` only in the SIMD kernel and in reading the input buffer (`src/python.rs`).
 - The Rust crate is not published; its only user is the Python extension. Code that
   neither the Python API nor the tests use is removed (add it back when something needs
   it). Checks that guard an invariant stay, even when no test can reach them.
-  `unsafe` only in the SIMD kernel and in reading the input buffer (`src/python.rs`).
 
 ## Commits and pull requests
 
