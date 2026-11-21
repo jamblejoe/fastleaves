@@ -59,8 +59,9 @@ jobs:
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: sde64 -skx --
         # exit code 2: some mutants missed, 3: some timed out (caught); both go on to stage 2.
-        # 4 means the tests fail without mutations.
-        run: cargo mutants --cargo-arg=--release --timeout 900 -j 4 || test $? -le 3
+        # 4 means the tests fail without mutations. No annotations: stage 2 catches most of the
+        # mutants stage 1 misses, so they would show as warnings on code that is tested.
+        run: cargo mutants --cargo-arg=--release --timeout 900 -j 4 --annotations none || test $? -le 3
       - run: pip install -e ".[test]"
       - name: "Stage 2: pytest on the mutants stage 1 missed, scalar path"
         env:
