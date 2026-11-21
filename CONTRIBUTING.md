@@ -21,13 +21,16 @@ Intel's emulator (see [tests/README.md](tests/README.md)).
 - `src/forest.rs` bins inputs and holds the scalar kernel.
 - `src/avx512.rs` is the SIMD kernel.
 - `src/python.rs` and `python/fastleaves` are the Python API.
-- `tests/` holds the parity and refusal tests, described in [tests/README.md](tests/README.md).
+- `tests/` holds the Python tests, described in [tests/README.md](tests/README.md): every
+  prediction against LightGBM's, and every refusal. The Rust tests, next to the code in
+  `src/`, check what needs no LightGBM: the SIMD kernel against the scalar one, and the
+  model reader.
 
 ## Rules
 
-- The tests define correctness: exact comparison against LightGBM, generated cases
-  (hypothesis) for edge-case inputs, and a test for every error in the scope table.
-  Never weaken a test to make it pass.
+- The tests define correctness: comparison with LightGBM bit for bit, never approximate;
+  generated cases (hypothesis) for edge-case inputs; and a test for every error in the
+  scope table. Never weaken a test to make it pass.
 - A nightly mutation test checks that the tests catch changes to the Rust code. A new
   surviving mutant gets a test that catches it, or its code is removed. Only equivalent
   changes and checks that cannot trigger go in `tests/mutants-survivors.txt`, each with
