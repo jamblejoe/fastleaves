@@ -1,0 +1,42 @@
+# Mutants no test can catch (see .github/mutants.py), one line per mutant, without line numbers.
+# Reviewed by hand; a new survivor fails the nightly job until a test catches it or it is added
+# here with the reason.
+
+# Equivalent: the flag bits combined in a node never overlap, so | and ^ give the same.
+src/forest.rs: replace | with ^ in Forest::pack
+src/forest.rs: replace | with ^ in Forest::pack
+src/forest.rs: replace | with ^ in Forest::pack
+src/forest.rs: replace | with ^ in Forest::pack
+src/forest.rs: replace | with ^ in Forest::pack
+src/forest.rs: replace | with ^ in Forest::pack
+
+# Equivalent in release builds: a shift by k + 32 is a shift by k % 32 (the amount is masked).
+src/forest.rs: replace % with + in Forest::pack
+src/forest.rs: replace % with + in leaf_scalar
+src/model.rs: replace % with + in Tree::split
+
+# Equivalent: a child 0, or a child equal to its parent, is rejected either way.
+src/model.rs: replace < with <= in Tree::root
+src/model.rs: replace > with >= in Tree::root
+
+# Equivalent: no model has category 2**31 (LightGBM's categories are 32-bit signed integers).
+src/forest.rs: replace < with <= in bin
+
+# Unreachable: more than 2**31 words of category sets (8 GB).
+src/forest.rs: replace > with == in Forest::pack
+src/forest.rs: replace > with >= in Forest::pack
+src/forest.rs: replace + with * in Forest::pack
+
+# Unreachable: a tree with more than 65,535 nodes; Model::parse refuses more than 32,768 leaves.
+src/forest.rs: replace > with == in Forest::pack
+src/forest.rs: replace > with >= in Forest::pack
+src/forest.rs: replace + with - in Forest::pack
+src/forest.rs: replace + with * in Forest::pack
+
+# Unreachable from Python: Booster.predict always passes start <= end <= num_trees.
+src/python.rs: replace || with && in Model::rows
+
+# Kernel choice. In stage 1 (emulator) every CPU check is true. In stage 2 (FASTLEAVES_ISA=scalar)
+# the first change is invisible, the second only shows on a runner with AVX-512.
+src/avx512.rs: replace && with || in Avx512::detect
+src/avx512.rs: replace && with || in Avx512::detect

@@ -23,16 +23,6 @@ impl Error {
     }
 }
 
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Error::Unsupported(m) | Error::Invalid(m) => f.write_str(m),
-        }
-    }
-}
-
-impl std::error::Error for Error {}
-
 /// The SIMD path predictions use: "avx512", or "scalar" (no AVX-512, or FASTLEAVES_ISA=scalar).
 pub fn isa() -> &'static str {
     if avx512::Avx512::detect().is_some() { "avx512" } else { "scalar" }

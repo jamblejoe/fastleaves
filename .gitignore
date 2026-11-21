@@ -221,3 +221,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# cargo mutants (tests/README.md)
+mutants.out*/
