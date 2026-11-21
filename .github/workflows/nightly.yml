@@ -31,3 +31,40 @@ jobs:
       - run: pip install ".[test]"
       # one process: SDE cannot follow pytest-xdist's workers into a new python
       - run: sde64 -skx -- python -m pytest -n 0
+
+  # Mutation test: cargo-mutants changes the Rust code in one place at a time (`<` to `<=`, a
+  # function body to a constant, ...), and some test must fail for each change. Stage 1: the
+  # Rust tests, the kernel on the emulator. Stage 2 (.github/mutants.py): pytest, scalar path,
+  # on the mutants stage 1 misses. Fails on a surviving mutant not in mutants-survivors.txt.
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Intel SDE (AVX-512 emulator)
+        uses: petarpetrovt/setup-sde@6d2773bc0ef3005fd52e0ae0bb91782321793aec # v6.0
+        with:
+          environmentVariableName: SDE_PATH
+          sdeVersion: 10.13.1
+      - run: echo "$SDE_PATH" >> "$GITHUB_PATH"
+      - run: cargo install cargo-mutants --locked --version 27.1.0
+      - name: "Stage 1: Rust tests, AVX-512 kernel on the emulator"
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: sde64 -skx --
+        # exit code 2: some mutants missed, 3: some timed out (caught); both go on to stage 2.
+        # 4 means the tests fail without mutations.
+        run: cargo mutants --cargo-arg=--release --timeout 900 -j 4 || test $? -le 3
+      - run: pip install -e ".[test]"
+      - name: "Stage 2: pytest on the mutants stage 1 missed, scalar path"
+        env:
+          FASTLEAVES_ISA: scalar
+          FASTLEAVES_REQUIRE_AVX512: "" # set for the whole workflow; the scalar path is wanted here
+        run: python .github/mutants.py mutants.out/outcomes.json | tee mutants.out/pytest.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants
+          path: mutants.out
