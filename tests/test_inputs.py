@@ -1,8 +1,11 @@
 """Input handling: every input form gives LightGBM's result for the same input."""
 
 import functools
+import itertools
 import os
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import lightgbm
 import numpy as np
@@ -15,6 +18,9 @@ import fastleaves
 from cases import (
     DATASETS,
     assert_bit_identical,
+    chain_model,
+    complete_model,
+    edge_rows,
     edge_values,
     features,
     split_categories,
@@ -170,6 +176,32 @@ def test_254_thresholds_on_one_feature(missing, pred_leaf):
         for v1 in [0.0, 100.0, 254.0, 255.0, 256.0, -1.0, np.nan]:  # known and unseen categories
             edges.append([v0, v1])
     check(model, np.vstack([np.array(edges), x]), pred_leaf=pred_leaf)
+
+
+def on_small_stack(f):
+    """f() on a thread with a 256 KB stack, where recursing once per tree level would crash."""
+    default = threading.stack_size(256 * 1024)
+    try:
+        with ThreadPoolExecutor(1) as thread:
+            return thread.submit(f).result()
+    finally:
+        threading.stack_size(default)
+
+
+LARGEST_TREES = {"chain": lambda: chain_model(32_768), "complete": lambda: complete_model(15)}
+
+
+@pytest.mark.parametrize("shape", LARGEST_TREES)
+def test_largest_tree(shape):
+    """The most leaves supported in a tree, 32,768 (65,535 nodes): a chain 32,767 levels deep,
+    and a complete tree 15 levels deep. fastleaves loads it on a small stack. Rows: each edge
+    value of each feature, and every row of 0s and 1s (each leaf of the complete tree)."""
+    text = LARGEST_TREES[shape]()
+    model, booster = lightgbm.Booster(model_str=text), on_small_stack(lambda: fastleaves.Booster(model_str=text))
+    n = model.num_feature()
+    x = np.vstack([edge_rows(model, np.zeros(n)), list(itertools.product([0.0, 1.0], repeat=n))])
+    for options in [{}, {"pred_leaf": True}]:
+        assert_bit_identical(booster.predict(x, **options), model.predict(x, **options))
 
 
 # How LightGBM writes sigmoids (6 significant digits), plus values it reads one double off
