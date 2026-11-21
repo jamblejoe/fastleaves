@@ -34,8 +34,8 @@ jobs:
 
   # Mutation test: cargo-mutants changes the Rust code in one place at a time (`<` to `<=`, a
   # function body to a constant, ...), and some test must fail for each change. Stage 1: the
-  # Rust tests, the kernel on the emulator. Stage 2 (.github/mutants.py): pytest, scalar path,
-  # on the mutants stage 1 misses. Fails on a surviving mutant not in mutants-survivors.txt.
+  # Rust tests, the kernel on the emulator. Stage 2 (tests/mutants.py): pytest, scalar path,
+  # on the mutants stage 1 misses. Fails when more survive than tests/mutants-survivors.txt lists.
   mutants:
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -62,7 +62,7 @@ jobs:
         env:
           FASTLEAVES_ISA: scalar
           FASTLEAVES_REQUIRE_AVX512: "" # set for the whole workflow; the scalar path is wanted here
-        run: python .github/mutants.py mutants.out/outcomes.json | tee mutants.out/pytest.txt
+        run: python tests/mutants.py mutants.out/outcomes.json | tee mutants.out/pytest.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -5,7 +5,7 @@ misses too are printed. mutants-survivors.txt lists those that no test can catch
 mutant and without line numbers, so that edits elsewhere do not change it; the script fails if
 more mutants survive with some description than it lists.
 
-Usage: python .github/mutants.py mutants.out/outcomes.json [pytest arguments]
+Usage: python tests/mutants.py mutants.out/outcomes.json [pytest arguments]
 """
 
 import json
@@ -65,4 +65,4 @@ print(f"\n{len(survivors)} of the {len(missed)} mutants the Rust tests miss surv
 print("\n".join(survivors))
 new = Counter(map(without_position, survivors)) - known
 if new:
-    sys.exit("\nMore than .github/mutants-survivors.txt lists:\n" + "\n".join(new.elements()))
+    sys.exit("\nMore than tests/mutants-survivors.txt lists:\n" + "\n".join(new.elements()))

@@ -1,4 +1,4 @@
-# Mutants no test can catch (see .github/mutants.py), one line per mutant, without line numbers.
+# Mutants no test can catch (see tests/mutants.py), one line per mutant, without line numbers.
 # Reviewed by hand; a new survivor fails the nightly job until a test catches it or it is added
 # here with the reason.
 

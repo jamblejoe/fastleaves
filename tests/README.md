@@ -28,9 +28,9 @@ fast kernel is not used.
 
 A nightly mutation test checks the tests themselves. cargo-mutants changes the Rust code in one
 place at a time (`<` to `<=`, a function body to a constant, ...) and runs the Rust tests, the
-kernel on the emulator; `.github/mutants.py` runs pytest (scalar path) on each change they miss.
+kernel on the emulator; `tests/mutants.py` runs pytest (scalar path) on each change they miss.
 Some test must fail for every change, except those listed with the reason in
-`.github/mutants-survivors.txt` (equivalent changes and unreachable checks). Locally (the
+`tests/mutants-survivors.txt` (equivalent changes and unreachable checks). Locally (the
 first command fails when it misses mutants; the second judges them):
 
 ```bash
@@ -38,7 +38,7 @@ cargo mutants --cargo-arg=--release
 ```
 
 ```bash
-python .github/mutants.py mutants.out/outcomes.json
+python tests/mutants.py mutants.out/outcomes.json
 ```
 
 | File | What it checks |
@@ -48,6 +48,7 @@ python .github/mutants.py mutants.out/outcomes.json
 | `test_refusals.py` | One test for each refusal in the scope table. |
 | `test_random_models.py` | 200 model files with random trees, written directly instead of trained (see below). |
 | `cases.py` | The datasets, objectives, training settings, test rows and hand-written model files (a chain, a complete tree) the tests share. |
+| `mutants.py`, `mutants-survivors.txt` | Not tests: the second stage of the nightly mutation test, and the mutants no test can catch (see above). |
 
 ## The parity matrix
 
