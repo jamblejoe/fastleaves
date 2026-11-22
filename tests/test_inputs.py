@@ -124,8 +124,19 @@ def test_model_file_and_string(tmp_path):
     model = train(*MODEL)
     model.save_model(tmp_path / "model.txt")
     x, expected = rows(500), model.predict(rows(500))
-    assert_bit_identical(fastleaves.Booster(model_file=tmp_path / "model.txt").predict(x), expected)
-    assert_bit_identical(fastleaves.Booster(model_str=model.model_to_string()).predict(x), expected)
+    for booster in [fastleaves.Booster(model_file=tmp_path / "model.txt"),
+                    fastleaves.Booster(model_str=model.model_to_string())]:
+        assert_bit_identical(booster.predict(x), expected)
+        assert booster.num_feature() == model.num_feature()
+        assert booster.num_trees() == model.num_trees()
+        assert booster.feature_name() == model.feature_name()
+
+
+def test_isa_names_the_kernel():
+    """`isa()` is "avx512" or "scalar", and "scalar" when FASTLEAVES_ISA=scalar."""
+    assert fastleaves.isa() in ("avx512", "scalar")
+    if os.environ.get("FASTLEAVES_ISA") == "scalar":
+        assert fastleaves.isa() == "scalar"
 
 
 def test_best_iteration_from_early_stopping():
