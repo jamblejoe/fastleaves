@@ -26,14 +26,16 @@ installed by `petarpetrovt/setup-sde`): the kernel tests on every push, the whol
 installed wheel. `FASTLEAVES_REQUIRE_AVX512=1` makes both suites fail if the
 fast kernel is not used.
 
-A nightly mutation test checks the tests themselves. cargo-mutants changes the Rust code in one
-place at a time (`<` to `<=`, a function body to a constant, ...) and runs the Rust tests, the
-kernel on the emulator; `tests/mutants.py` runs pytest (scalar path) on each change they miss.
-Some test must fail for every change, except those listed with the reason in
-`tests/mutants-survivors.txt` (equivalent changes and unreachable checks). A failing nightly
-run opens an issue "Nightly mutation test failed", or comments on the open one, with the new
-survivors; the maintainer decides for each: a test that catches it, or an entry in the list. Locally (the
-first command fails when it misses mutants; the second judges them):
+A mutation test (`.github/workflows/mutants.yml`) checks the tests themselves: nightly for
+all the Rust code, and on pull requests for the lines they change. cargo-mutants changes
+the code in one place at a time (`<` to `<=`, a function body to a constant, ...) and runs
+the Rust tests, the kernel on the emulator; `tests/mutants.py` runs pytest (scalar path)
+on each change they miss. Some test must fail for every change, except those listed with
+the reason in `tests/mutants-survivors.txt` (equivalent changes and unreachable checks). A
+failing nightly run opens an issue "Nightly mutation test failed", or comments on the open
+one, with the new survivors; the maintainer decides for each: a test that catches it, or
+an entry in the list. Locally (the first command fails when it misses mutants; the second
+judges them):
 
 ```bash
 cargo mutants --cargo-arg=--release
