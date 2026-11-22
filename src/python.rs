@@ -46,11 +46,6 @@ impl Model {
         self.0.feature_names.clone()
     }
 
-    #[getter]
-    fn objective(&self) -> &str {
-        &self.0.objective
-    }
-
     /// Writes into `out` (float64, one per row) the predictions for the C-contiguous float64
     /// matrix `x` from trees `start..end`, on `num_threads` threads (0: all cores). Releases the GIL.
     #[allow(clippy::too_many_arguments)] // mirrors the Python call

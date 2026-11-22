@@ -31,3 +31,4 @@ jobs:
       - run: pip install ".[test]"
       # one process: SDE cannot follow pytest-xdist's workers into a new python
       - run: sde64 -skx -- python -m pytest -n 0
+

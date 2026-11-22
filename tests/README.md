@@ -26,13 +26,33 @@ installed by `petarpetrovt/setup-sde`): the kernel tests on every push, the whol
 installed wheel. `FASTLEAVES_REQUIRE_AVX512=1` makes both suites fail if the
 fast kernel is not used.
 
+A mutation test (`.github/workflows/mutants.yml`) checks the tests themselves: nightly for
+all the Rust code, and on pull requests for the lines they change. cargo-mutants changes
+the code in one place at a time (`<` to `<=`, a function body to a constant, ...) and runs
+the Rust tests, the kernel on the emulator; `tests/mutants.py` runs pytest (scalar path)
+on each change they miss. Some test must fail for every change, except those listed with
+the reason in `tests/mutants-survivors.txt` (equivalent changes and unreachable checks). A
+failing nightly run opens an issue "Nightly mutation test failed", or comments on the open
+one, with the new survivors; the maintainer decides for each: a test that catches it, or
+an entry in the list. Locally (the first command fails when it misses mutants; the second
+judges them):
+
+```bash
+cargo mutants --cargo-arg=--release
+```
+
+```bash
+python tests/mutants.py mutants.out/outcomes.json
+```
+
 | File | What it checks |
 |---|---|
 | `test_parity.py` | The parity matrix: objective × dataset × training × predict options. |
-| `test_inputs.py` | Input forms (dtypes, layouts, lists, DataFrames, pandas categories), 255 categories on one feature (every category and unseen ones), 254 thresholds on one feature next to 255 categories (each missing-value mode, every threshold and its neighbors), the largest tree (32,768 leaves: a chain 32,767 levels deep and a complete tree, loaded on a 256 KB stack), `binary` sigmoids in the model file (including ones LightGBM's number parser reads one double off), batch sizes (also with 100 features), models with many unused features, thread counts (also with `pred_leaf`), model files, early stopping, `validate_features`, generated rows (hypothesis). |
+| `test_inputs.py` | Input forms (dtypes, layouts, lists, DataFrames, pandas categories), 255 categories on one feature (every category and unseen ones), 254 thresholds on one feature next to 255 categories (each missing-value mode, every threshold and its neighbors), the largest tree (32,768 leaves: a chain 32,767 levels deep and a complete tree, loaded on a 256 KB stack), `binary` sigmoids in the model file (including ones LightGBM's number parser reads one double off), batch sizes (also with 100 features), models with many unused features, thread counts (also with `pred_leaf`), model files (with `num_feature`, `num_trees`, `feature_name`), `isa()`, early stopping, `validate_features`, generated rows (hypothesis). |
 | `test_refusals.py` | One test for each refusal in the scope table. |
 | `test_random_models.py` | 200 model files with random trees, written directly instead of trained (see below). |
 | `cases.py` | The datasets, objectives, training settings, test rows and hand-written model files (a chain, a complete tree) the tests share. |
+| `mutants.py`, `mutants-survivors.txt` | Not tests: the second stage of the nightly mutation test, and the mutants no test can catch (see above). |
 
 ## The parity matrix
 

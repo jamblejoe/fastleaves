@@ -20,7 +20,6 @@ pub enum Output {
 pub struct Model {
     pub forest: Forest,
     pub feature_names: Vec<String>,
-    pub objective: String,
     /// The output transformation, or why it is not supported (then only raw scores are).
     pub output: Result<Output, Error>,
 }
@@ -43,8 +42,8 @@ impl Model {
         }
         let n_features = number::<usize>(get("max_feature_idx")?)? + 1;
         let feature_names = get("feature_names")?.split(' ').map(String::from).collect();
-        let objective = header.get("objective").copied().unwrap_or("none").to_string();
-        let output = output(&objective);
+        let objective = header.get("objective").copied().unwrap_or("none");
+        let output = output(objective);
         if let Err(e @ Error::Invalid(_)) = &output {
             return Err(e.clone()); // LightGBM does not load such a model either
         }
@@ -55,7 +54,7 @@ impl Model {
                 trees.push(parse_tree(block)?);
             }
         }
-        Ok(Model { forest: Forest::new(n_features, &trees)?, feature_names, output, objective })
+        Ok(Model { forest: Forest::new(n_features, &trees)?, feature_names, output })
     }
 
     /// Predictions for the row-major matrix `x` from `trees`, or raw scores if `raw_score`.
@@ -321,7 +320,7 @@ shrinkage=1";
         let m = Model::parse(&model(&[TREE])).unwrap();
         assert_eq!((m.forest.n_features(), m.forest.n_trees()), (2, 1));
         assert_eq!(m.feature_names, ["a", "b"]);
-        assert_eq!((m.objective.as_str(), m.output.clone()), ("poisson", Ok(Output::Exp)));
+        assert_eq!(m.output.clone(), Ok(Output::Exp));
         let x = [0.2, 1.0, 0.2, 2.0, 0.7, 1.0, f64::NAN, 1.9];
         assert_eq!(predict(&m, &x, true), [1.0, 2.0, 3.0, 1.0]);
         assert_eq!(predict(&m, &x, false), [1f64.exp(), 2f64.exp(), 3f64.exp(), 1f64.exp()]);

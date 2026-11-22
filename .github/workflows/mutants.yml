@@ -1,0 +1,85 @@
+name: mutants
+# Mutation test: cargo-mutants changes the Rust code in one place at a time (`<` to `<=`, a
+# function body to a constant, ...), and some test must fail for each change. Stage 1: the Rust
+# tests, the kernel on the emulator. Stage 2 (tests/mutants.py): pytest, scalar path, on the
+# mutants stage 1 misses. Fails when more survive than tests/mutants-survivors.txt lists.
+# Nightly: all mutants; a failure opens an issue (or comments on the open one). Pull requests
+# that change the Rust code: only the mutants in the changed lines.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths: [src/**, tests/mutants.py, tests/mutants-survivors.txt, .github/workflows/mutants.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # for the diff of a pull request
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Intel SDE (AVX-512 emulator)
+        uses: petarpetrovt/setup-sde@6d2773bc0ef3005fd52e0ae0bb91782321793aec # v6.0
+        with:
+          environmentVariableName: SDE_PATH
+          sdeVersion: 10.13.1
+      - run: echo "$SDE_PATH" >> "$GITHUB_PATH"
+      - run: cargo install cargo-mutants --locked --version 27.1.0
+      - name: Only the changed lines of a pull request
+        if: github.event_name == 'pull_request'
+        # a pull request that changes no Rust code (only the test tooling or this file) tests all
+        run: |
+          git diff "origin/$GITHUB_BASE_REF...HEAD" -- src > pr.diff
+          if [ -s pr.diff ]; then echo "IN_DIFF=--in-diff pr.diff" >> "$GITHUB_ENV"; fi
+      - name: "Stage 1: Rust tests, AVX-512 kernel on the emulator"
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: sde64 -skx --
+          FASTLEAVES_REQUIRE_AVX512: "1" # the kernel test fails if the emulator is not used
+        # exit code 2: some mutants missed, 3: some timed out (caught); both go on to stage 2.
+        # 4 means the tests fail without mutations. No annotations: stage 2 catches most of the
+        # mutants stage 1 misses, so they would show as warnings on code that is tested.
+        run: cargo mutants --cargo-arg=--release --timeout 900 -j 4 --annotations none $IN_DIFF || test $? -le 3
+      - run: pip install -e ".[test]"
+      - name: "Stage 2: pytest on the mutants stage 1 missed, scalar path"
+        if: hashFiles('mutants.out/outcomes.json') != '' # none: no mutants in the changed lines
+        env:
+          FASTLEAVES_ISA: scalar
+        run: python tests/mutants.py mutants.out/outcomes.json 2>&1 | tee mutants.out/pytest.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants
+          path: mutants.out
+      # For each new survivor the maintainer decides: a test that catches it, or an entry in
+      # tests/mutants-survivors.txt with the reason. Only for nightly runs; a pull request shows
+      # its failure itself.
+      - name: Issue on failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Nightly mutation test failed"
+          survivors=$(sed -n '/^More than/,$p' mutants.out/pytest.txt 2>/dev/null || true)
+          body="Run: $RUN
+
+          ${survivors:-The job failed before judging the survivors (build, baseline or timeout); see the run.}
+
+          For each new survivor: add a test that catches it, or add it to \`tests/mutants-survivors.txt\` with the reason."
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi
