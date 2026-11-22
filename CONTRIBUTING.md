@@ -31,10 +31,10 @@ Intel's emulator (see [tests/README.md](tests/README.md)).
 - The tests define correctness: comparison with LightGBM bit for bit, never approximate;
   generated cases (hypothesis) for edge-case inputs; and a test for every error in the
   scope table. Never weaken a test to make it pass.
-- A nightly mutation test checks that the tests catch changes to the Rust code. A new
-  surviving mutant gets a test that catches it, or its code is removed. Only equivalent
-  changes and checks that cannot trigger go in `tests/mutants-survivors.txt`, each with
-  the reason.
+- A mutation test checks that the tests catch changes to the Rust code: nightly for all of
+  it, on pull requests for the changed lines. A new surviving mutant gets a test that
+  catches it, or its code is removed. Only equivalent changes and checks that cannot
+  trigger go in `tests/mutants-survivors.txt`, each with the reason.
 - No tolerances, fast-math or changed summation order.
 - Unsupported models, inputs and options raise an error; never fall back to LightGBM
   or return approximate numbers.
