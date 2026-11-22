@@ -216,9 +216,11 @@ def test_largest_tree(shape):
 
 
 # How LightGBM writes sigmoids (6 significant digits), plus values it reads one double off
-# with its own number parser, longer fractions, exponents and signs.
+# with its own number parser, longer fractions, exponents and signs. The two longest
+# fractions (26 and 39 digits) are where the order of LightGBM's Pow(10, n) changes the result.
 SIGMOIDS = ["1", "0.7", "2.3892", "1.22951", "17.9733", "0.123457", "3.14159", "0.001", "1e-07", "123456",
-            "2.5E+3", "+0.5", "0.30000000000000004", "1.2345678901234567890123456789", "7e-300"]
+            "2.5E+3", "+0.5", "0.30000000000000004", "1.2345678901234567890123456789", "7e-300",
+            "0.29141777631706690743915000", "0.806360837783533740681241586834497869073"]
 
 
 @pytest.mark.parametrize("sigmoid", SIGMOIDS)
