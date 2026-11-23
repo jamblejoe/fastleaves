@@ -35,7 +35,7 @@ small batches work but are not optimized.
 | Output | `regression`, `regression_l1`, `huber`, `fair`, `quantile`, `mape`, `poisson`, `gamma`, `tweedie`; any single-output objective with `raw_score=True` | `binary`/`cross_entropy` probabilities, `sqrt` regression, random-forest mode, multiclass, linear trees |
 | Input | 2D numpy (float64, float32, integer); pandas DataFrame incl. categorical columns | sparse matrices, 1D input |
 | `predict` options | `start_iteration`, `num_iteration`, `raw_score`, `pred_leaf`, `validate_features`, `num_threads` (default: all cores) | `pred_contrib`, other options |
-| Platform | Linux x86-64, Python 3.11+; fast path on AVX-512 CPUs, slower scalar path elsewhere | Windows, macOS |
+| Platform | Linux and Windows x86-64, Python 3.11+; fast path on AVX-512 CPUs, slower scalar path elsewhere | macOS |
 
 Continued training (`init_model`) on data that differs from the first run can give one
 feature splits of two kinds or missing-value modes, for example when the new data has NaN

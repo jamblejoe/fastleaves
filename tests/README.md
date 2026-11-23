@@ -20,10 +20,10 @@ LightGBM's predictions do not depend on its thread count, and tests that pass `n
 still set it. Each worker trains a model when it first needs it and caches it with its test
 rows (`functools.cache` in `cases.py`).
 
-GitHub's runners may lack AVX-512, so CI also runs the fast kernel on Intel's emulator (SDE,
+CI runs the tests on Linux and Windows. GitHub's runners may lack AVX-512, so CI also runs the fast kernel on Intel's emulator (SDE,
 installed by `petarpetrovt/setup-sde`): the kernel tests on every push, the whole suite nightly
 (`.github/workflows/nightly.yml`). The release workflow runs the whole suite on both paths against the
-installed wheel. `FASTLEAVES_REQUIRE_AVX512=1` makes both suites fail if the
+installed wheel, on Linux and Windows (the emulated run on Linux only). `FASTLEAVES_REQUIRE_AVX512=1` makes both suites fail if the
 fast kernel is not used.
 
 A mutation test (`.github/workflows/mutants.yml`) checks the tests themselves: nightly for
@@ -48,7 +48,7 @@ python tests/mutants.py mutants.out/outcomes.json
 | File | What it checks |
 |---|---|
 | `test_parity.py` | The parity matrix: objective × dataset × training × predict options. |
-| `test_inputs.py` | Input forms (dtypes, layouts, lists, DataFrames, pandas categories), 255 categories on one feature (every category and unseen ones), 254 thresholds on one feature next to 255 categories (each missing-value mode, every threshold and its neighbors), the largest tree (32,768 leaves: a chain 32,767 levels deep and a complete tree, loaded on a 256 KB stack), batch sizes (also with 100 features), models with many unused features, thread counts (also with `pred_leaf`), calls from several Python threads at once, model files (with `num_feature`, `num_trees`, `feature_name`), `isa()`, early stopping, `validate_features`, generated rows (hypothesis). |
+| `test_inputs.py` | Input forms (dtypes, layouts, lists, DataFrames, pandas categories), 255 categories on one feature (every category and unseen ones), 254 thresholds on one feature next to 255 categories (each missing-value mode, every threshold and its neighbors), the largest tree (32,768 leaves: a chain 32,767 levels deep and a complete tree, loaded on a 256 KB stack), batch sizes (also with 100 features), models with many unused features, thread counts (also with `pred_leaf`), calls from several Python threads at once, model files (with `num_feature`, `num_trees`, `feature_name`; non-ASCII feature names), `isa()`, early stopping, `validate_features`, generated rows (hypothesis). |
 | `test_refusals.py` | One test for each refusal in the scope table. |
 | `test_random_models.py` | 200 model files with random trees, written directly instead of trained (see below). |
 | `cases.py` | The datasets, objectives, training settings, test rows and hand-written model files (a chain, a complete tree) the tests share. |

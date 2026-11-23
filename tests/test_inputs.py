@@ -144,6 +144,16 @@ def test_model_file_and_string(tmp_path):
         assert booster.feature_name() == model.feature_name()
 
 
+def test_model_file_with_non_ascii_feature_names(tmp_path):
+    """LightGBM writes model files in UTF-8, whatever the system's default encoding (cp1252 on Windows)."""
+    x = pd.DataFrame(np.random.default_rng(0).standard_normal((500, 2)), columns=["größe", "温度"])
+    model = lightgbm.train({"verbose": -1}, lightgbm.Dataset(x, x.sum(axis=1)), 5)
+    model.save_model(tmp_path / "model.txt")
+    booster = fastleaves.Booster(model_file=tmp_path / "model.txt")
+    assert booster.feature_name() == model.feature_name() == ["größe", "温度"]
+    assert_bit_identical(booster.predict(x, validate_features=True), model.predict(x, validate_features=True))
+
+
 def test_isa_names_the_kernel():
     """`isa()` is "avx512" or "scalar", and "scalar" when FASTLEAVES_ISA=scalar."""
     assert fastleaves.isa() in ("avx512", "scalar")

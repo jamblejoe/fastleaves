@@ -1,5 +1,5 @@
 name: publish
-# A `v*` tag builds the wheel, tests the installed wheel and publishes it to PyPI.
+# A `v*` tag builds the wheels (Linux, Windows), tests the installed wheels and publishes them to PyPI.
 # Run by hand (workflow_dispatch) for a dry run: build and tests, no upload.
 on:
   push:
@@ -11,31 +11,38 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - name: Tag matches the version in Cargo.toml
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' && runner.os == 'Linux'
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, Cargo.toml $version"; exit 1; }
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: x86_64
-          manylinux: auto
+          manylinux: auto  # Linux only
           args: --release --out dist
       - uses: actions/upload-artifact@v4
         with:
-          name: dist
+          name: dist-${{ matrix.os }}
           path: dist
 
   # The installed wheel, not the source tree: alone with numpy, then the whole test suite.
   test:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python: ["3.11", "3.14"]
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,16 +50,18 @@ jobs:
           python-version: ${{ matrix.python }}
       - uses: actions/download-artifact@v4
         with:
-          name: dist
+          name: dist-${{ matrix.os }}
           path: dist
       - name: Clean environment, only numpy installed
         run: |
-          python -m venv /tmp/clean
-          /tmp/clean/bin/pip install dist/*.whl
-          /tmp/clean/bin/pip list --format=freeze | grep -v -E '^(pip|setuptools)=' | sort > installed
+          python -m venv "$RUNNER_TEMP/clean"
+          bin="$RUNNER_TEMP/clean/bin"; [ -d "$bin" ] || bin="$RUNNER_TEMP/clean/Scripts"  # Windows
+          echo "CLEAN=$bin" >> "$GITHUB_ENV"
+          "$bin/python" -m pip install dist/*.whl
+          "$bin/python" -m pip list --format=freeze | tr -d '\r' | grep -v -E '^(pip|setuptools)=' | sort > installed
           cat installed
           test "$(cut -d= -f1 installed | tr '\n' ' ')" = "fastleaves numpy "
-      - run: /tmp/clean/bin/python -c "import fastleaves; print(fastleaves.isa())"
+      - run: '"$CLEAN/python" -c "import fastleaves; print(fastleaves.isa())"'
       - run: pip install dist/*.whl && pip install pytest pytest-xdist hypothesis "lightgbm>=4,<5" pandas
       # pytest puts tests/ on the path, not python/, so the installed wheel is tested
       - name: pytest (fast path if the CPU has AVX-512, see the report header)
@@ -74,7 +83,7 @@ jobs:
           python-version: "3.13"
       - uses: actions/download-artifact@v4
         with:
-          name: dist
+          name: dist-ubuntu-latest
           path: dist
       - name: Intel SDE (AVX-512 emulator)
         uses: petarpetrovt/setup-sde@6d2773bc0ef3005fd52e0ae0bb91782321793aec # v6.0
@@ -97,6 +106,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: dist
+          pattern: dist-*
+          merge-multiple: true
           path: dist
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
