@@ -120,6 +120,18 @@ def test_thread_counts(threads, pred_leaf):
     check(train(*MODEL), rows(10_000), num_threads=threads, pred_leaf=pred_leaf)
 
 
+def test_concurrent_calls():
+    """Calls from several Python threads at once share fastleaves' thread pools."""
+    model = train(*MODEL)
+    booster = fastleaves.Booster.from_lightgbm(model)
+    x = rows(10_000)
+    expected = model.predict(x)
+    with ThreadPoolExecutor(8) as ex:
+        results = list(ex.map(lambda t: booster.predict(x, num_threads=t), [0, 2, 0, 2, 3, 0, 1, 2] * 2))
+    for got in results:
+        assert_bit_identical(got, expected)
+
+
 def test_model_file_and_string(tmp_path):
     model = train(*MODEL)
     model.save_model(tmp_path / "model.txt")

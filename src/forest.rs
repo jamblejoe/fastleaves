@@ -263,7 +263,8 @@ impl Forest {
     }
 
     /// Raw score of each row of the row-major matrix `x`: the sum of the leaf values of
-    /// `trees`, added in tree order as LightGBM does. Runs on rayon's current thread pool.
+    /// `trees`, added in tree order as LightGBM does. Runs on rayon's current thread pool, or on the
+    /// calling thread if `x` fits in one block.
     pub fn predict_raw(&self, x: &[f64], out: &mut [f64], trees: Range<usize>) {
         out.fill(0.0);
         self.for_each_tree(x, out, 1, trees, |acc, _, root, leaf_of| {
@@ -273,7 +274,8 @@ impl Forest {
     }
 
     /// LightGBM's index of the leaf each row of `x` reaches in each of `trees`: row-major,
-    /// `trees.len()` per row. Runs on rayon's current thread pool.
+    /// `trees.len()` per row. Runs on rayon's current thread pool, or on the calling thread if `x`
+    /// fits in one block.
     pub fn predict_leaf(&self, x: &[f64], out: &mut [i32], trees: Range<usize>) {
         let width = trees.len();
         if width == 0 {
@@ -304,7 +306,7 @@ impl Forest {
             "x must have one row of {nf} features per {width} outputs"
         );
         let simd = Avx512::detect();
-        out.par_chunks_mut(BLOCK * width).zip(x.par_chunks(BLOCK * nf.max(1))).for_each(|(out, x)| {
+        let block = |(out, x): (&mut [T], &[f64])| {
             let n = out.len() / width;
             let bins = self.bin_block(x);
             let mut leaf_of = vec![0u32; n];
@@ -321,7 +323,12 @@ impl Forest {
                 }
                 f(out, k, root, &leaf_of);
             }
-        });
+        };
+        match out.len() {
+            0 => {}
+            n if n <= BLOCK * width => block((out, x)), // one block: on the calling thread
+            _ => out.par_chunks_mut(BLOCK * width).zip(x.par_chunks(BLOCK * nf.max(1))).for_each(block),
+        }
     }
 }
 
