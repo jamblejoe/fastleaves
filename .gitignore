@@ -224,3 +224,6 @@ __marimo__/
 
 # cargo mutants (tests/README.md)
 mutants.out*/
+
+# MSVC debug symbols from Windows builds
+*.pdb
