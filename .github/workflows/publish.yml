@@ -25,7 +25,7 @@ jobs:
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: x86_64
-          manylinux: auto  # Linux only
+          manylinux: auto  # the Linux wheel's manylinux tag; ignored by the Windows build
           args: --release --out dist
       - uses: actions/upload-artifact@v4
         with:

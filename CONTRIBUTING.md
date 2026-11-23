@@ -12,9 +12,6 @@ FASTLEAVES_ISA=scalar pytest    # force the scalar path
 cargo test --release            # kernel tests
 ```
 
-On Windows, building needs the MSVC C++ Build Tools, and the scalar run is
-`$env:FASTLEAVES_ISA="scalar"; pytest` in PowerShell.
-
 On a CPU without AVX-512, `pytest` runs the scalar path only; CI covers the fast kernel on
 Intel's emulator (see [tests/README.md](tests/README.md)).
 
