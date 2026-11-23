@@ -6,6 +6,8 @@ All notable changes to fastleaves. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-23
+
 - Windows x86-64 is supported: a wheel for Windows is published, and CI runs all tests on
   Windows too.
 - Model files are read as UTF-8, as LightGBM writes them. Before, feature names with
