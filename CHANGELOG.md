@@ -11,6 +11,9 @@ All notable changes to fastleaves. The format follows
 - The README's scope table states two existing refusals: trees with more than 32,768 leaves,
   and features whose splits mix kinds or missing-value modes (from continued training on
   different data).
+- Batches of up to 4096 rows are predicted on the calling thread, without starting threads.
+- Thread pools are kept between calls instead of being started on every call (one per
+  `num_threads` value). Calls from several Python threads at once share a pool.
 
 ## [0.4.0] - 2026-11-20
 
