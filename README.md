@@ -14,8 +14,29 @@ pred = booster.predict(X, num_threads=8)                # X: numpy array or pand
 ```
 
 `predict` takes the same arguments as `lightgbm.Booster.predict` and returns the same
-float64 values, bit for bit (int32 leaf indices with `pred_leaf=True`). It is built for thousands to millions of rows per call;
-small batches work but are not optimized.
+float64 values, bit for bit (int32 leaf indices with `pred_leaf=True`). It is built for
+thousands to millions of rows per call; small batches work but are not optimized. Refusals
+(see the scope below) raise `fastleaves.UnsupportedError`, a `ValueError`; inputs that
+LightGBM rejects too raise LightGBM's `ValueError`.
+
+### scikit-learn models
+
+`LGBMRegressor` and `LGBMClassifier` keep their `lightgbm.Booster` in `booster_`. Copy it,
+or save it with `model.booster_.save_model("model.txt")` and load the file where LightGBM
+is not installed:
+
+```python
+booster = fastleaves.Booster.from_lightgbm(model.booster_)
+
+booster.predict(X)                              # LGBMRegressor: model.predict(X)
+
+p = booster.predict(X)                          # LGBMClassifier: model.predict_proba(X)[:, 1]
+proba = np.column_stack([1 - p, p])             # model.predict_proba(X)
+labels = model.classes_[(p > 0.5).astype(int)]  # model.predict(X)
+```
+
+The early-stopping iteration (`best_iteration_`) carries over; `n_jobs` does not, so pass
+`num_threads`. Classifiers must be binary.
 
 ## Guarantees
 
