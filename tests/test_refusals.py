@@ -92,12 +92,30 @@ def test_unsupported_model_fails_to_load(model):
             fastleaves.Booster.from_lightgbm(model)
 
 
-OUTPUTS = ["binary", "cross_entropy", "sqrt regression"]
+def cross_entropy_lambda_model():
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(1000, 6))
+    return lightgbm.train({"verbose": -1, "objective": "cross_entropy_lambda"}, lightgbm.Dataset(x, rng.random(1000)), 5)
+
+
+def long_sigmoid_model():
+    """A binary model whose sigmoid has 23 digits after the decimal point, one more than supported."""
+    text = train("binary", "numeric", "default").model_to_string()
+    text = text.replace("objective=binary sigmoid:1\n", "objective=binary sigmoid:1.23456789012345678901234\n")
+    lightgbm.Booster(model_str=text)  # LightGBM loads it
+    return fastleaves.Booster(model_str=text)
+
+
+OUTPUTS = {
+    "sqrt regression": lambda: fastleaves.Booster.from_lightgbm(train("sqrt regression", "numeric", "default")),
+    "cross_entropy_lambda": lambda: fastleaves.Booster.from_lightgbm(cross_entropy_lambda_model()),
+    "binary sigmoid with more than 22 digits after the decimal point": long_sigmoid_model,
+}
 
 
 @pytest.mark.parametrize("objective", OUTPUTS)
 def test_unsupported_output_needs_raw_score(objective):
-    booster = fastleaves.Booster.from_lightgbm(train(objective, "numeric", "default"))
+    booster = OUTPUTS[objective]()
     x = np.zeros((3, 6))
     with pytest.raises(UnsupportedError):
         booster.predict(x)

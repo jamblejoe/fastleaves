@@ -32,7 +32,7 @@ small batches work but are not optimized.
 | Splits | numerical; categorical with up to 255 distinct categories per feature (any category IDs) | more than 255 categories on one feature; numerical and categorical splits on one feature (continued training, see below) |
 | Size | up to 256 features used in splits (any number of input columns), 254 thresholds per feature (enough for LightGBM's default `max_bin=255`), 32,768 leaves per tree | larger models |
 | Missing values | all modes (`None`, `NaN`, `Zero`) | different modes on one feature (continued training, see below) |
-| Output | `regression`, `regression_l1`, `huber`, `fair`, `quantile`, `mape`, `poisson`, `gamma`, `tweedie`; any single-output objective with `raw_score=True` | `binary`/`cross_entropy` probabilities, `sqrt` regression, random-forest mode, multiclass, linear trees |
+| Output | `regression`, `regression_l1`, `huber`, `fair`, `quantile`, `mape`, `poisson`, `gamma`, `tweedie`, `binary`, `cross_entropy`; any single-output objective with `raw_score=True` | `sqrt` regression and `cross_entropy_lambda` outputs, a `binary` sigmoid with more than 22 digits after the decimal point (LightGBM writes at most 9), random-forest mode, multiclass, linear trees |
 | Input | 2D numpy (float64, float32, integer); pandas DataFrame incl. categorical columns | sparse matrices, 1D input |
 | `predict` options | `start_iteration`, `num_iteration`, `raw_score`, `pred_leaf`, `validate_features`, `num_threads` (default: all cores) | `pred_contrib`, other options |
 | Platform | Linux and Windows x86-64, Python 3.11+; fast path on AVX-512 CPUs, slower scalar path elsewhere | macOS |
@@ -44,7 +44,7 @@ where the old had none. fastleaves refuses such models.
 NaN, ±inf, ±0 and unseen categories behave as in LightGBM. `predict` releases the GIL.
 
 Not planned: training, SHAP, GPU, XGBoost/CatBoost models, single-row latency.
-Next: models with more thresholds, then `binary` probabilities and multiclass.
+Next: models with more thresholds, then multiclass.
 
 ## Performance
 

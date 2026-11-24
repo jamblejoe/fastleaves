@@ -237,6 +237,23 @@ def test_largest_tree(shape):
         assert_bit_identical(booster.predict(x, **options), model.predict(x, **options))
 
 
+# How LightGBM writes sigmoids (6 significant digits), plus values it reads one double off
+# with its own number parser, longer fractions (up to the 22 digits supported), exponents and signs.
+SIGMOIDS = ["1", "0.7", "2.3892", "1.22951", "17.9733", "0.123457", "3.14159", "0.001", "1e-07", "123456",
+            "2.5E+3", "+0.5", "0.30000000000000004", "1.2345678901234567890123", "7e-300"]
+
+
+@pytest.mark.parametrize("sigmoid", SIGMOIDS)
+def test_binary_sigmoid(sigmoid):
+    """Any sigmoid in the model file, read as LightGBM reads it."""
+    text = train("binary", "with NaN", "default").model_to_string()
+    assert "objective=binary sigmoid:1\n" in text
+    text = text.replace("objective=binary sigmoid:1\n", f"objective=binary sigmoid:{sigmoid}\n")
+    x = rows(2000)
+    expected = lightgbm.Booster(model_str=text).predict(x)
+    assert_bit_identical(fastleaves.Booster(model_str=text).predict(x), expected)
+
+
 @PRED_LEAF
 def test_pandas_categorical_columns(pred_leaf):
     """Categories are matched by value, in the order seen in training, as LightGBM does."""

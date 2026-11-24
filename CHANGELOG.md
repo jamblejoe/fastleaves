@@ -6,6 +6,10 @@ All notable changes to fastleaves. The format follows
 
 ## [Unreleased]
 
+- `binary` and `cross_entropy` models predict probabilities (were raw scores only). A
+  `binary` model's sigmoid is read from the model file exactly as LightGBM reads it; a sigmoid
+  with more than 22 digits after the decimal point is refused (raw scores only).
+
 ## [0.5.0] - 2026-11-23
 
 - Windows x86-64 is supported: a wheel for Windows is published, and CI runs all tests on

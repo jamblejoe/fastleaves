@@ -32,7 +32,7 @@ def why_unsupported(objective, training, options):
     if training in ("linear trees", "random forest"):
         return training
     raw = options.get("raw_score") or options.get("pred_leaf")
-    if objective in ("binary", "cross_entropy", "sqrt regression") and not raw:
+    if objective == "sqrt regression" and not raw:
         return f"{objective} output (only raw_score=True or pred_leaf=True)"
     return None
 
