@@ -31,7 +31,7 @@ Issues = "https://github.com/jamblejoe/fastleaves/issues"
 Benchmarks = "https://github.com/jamblejoe/LGBMBench"
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-xdist", "hypothesis", "lightgbm>=4,<5", "pandas"]
+test = ["pytest", "pytest-xdist", "hypothesis", "lightgbm>=4,<5", "pandas", "scikit-learn"]
 
 [tool.maturin]
 python-source = "python"

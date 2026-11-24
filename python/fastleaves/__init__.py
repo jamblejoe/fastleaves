@@ -9,7 +9,7 @@ import numpy as np
 from ._core import Model as _Model
 from ._core import UnsupportedError, isa
 
-__all__ = ["Booster", "UnsupportedError", "isa"]
+__all__ = ["Booster", "Classifier", "Estimator", "UnsupportedError", "isa"]
 
 
 class Booster:
@@ -25,11 +25,20 @@ class Booster:
         self.best_iteration = -1
 
     @classmethod
-    def from_lightgbm(cls, booster):
-        """Copy of a `lightgbm.Booster`."""
-        copy = cls(model_str=booster.model_to_string(num_iteration=-1))
-        copy.best_iteration = booster.best_iteration
-        return copy
+    def from_lightgbm(cls, model):
+        """Copy of a `lightgbm.Booster`, or of a fitted scikit-learn model of LightGBM: a
+        `Classifier` for an `LGBMClassifier`, an `Estimator` for others (`LGBMRegressor`, ...).
+        """
+        if hasattr(model, "model_to_string"):  # a lightgbm.Booster
+            copy = cls(model_str=model.model_to_string(num_iteration=-1))
+            copy.best_iteration = model.best_iteration
+            return copy
+        booster = model.booster_  # raises if the model is not fitted
+        if hasattr(model, "classes_"):
+            copy = Classifier.from_lightgbm(booster)
+            copy.classes_ = model.classes_.copy()
+            return copy
+        return Estimator.from_lightgbm(booster)
 
     def num_feature(self):
         return self._model.num_features
@@ -87,6 +96,75 @@ class Booster:
         for i, (e, name) in enumerate(zip(expected, names)):
             if e != name:
                 raise ValueError(f"Expected '{e}' at position {i} but found '{name}'")
+
+
+
+class Estimator(Booster):
+    """A scikit-learn model of LightGBM (`LGBMRegressor`, ...) for prediction. `predict` takes
+    the model's arguments in its order and returns what its `predict` returns."""
+
+    def predict(
+        self,
+        X,
+        raw_score=False,
+        start_iteration=0,
+        num_iteration=None,
+        pred_leaf=False,
+        pred_contrib=False,
+        validate_features=False,
+        num_threads=0,
+    ):
+        return super().predict(
+            X,
+            start_iteration=start_iteration,
+            num_iteration=num_iteration,
+            raw_score=raw_score,
+            pred_leaf=pred_leaf,
+            pred_contrib=pred_contrib,
+            validate_features=validate_features,
+            num_threads=num_threads,
+        )
+
+
+class Classifier(Estimator):
+    """A binary `lightgbm.LGBMClassifier` for prediction: `predict` returns its class labels and
+    `predict_proba` its class probabilities, as the model's do. `classes_` are its labels."""
+
+    def predict(
+        self,
+        X,
+        raw_score=False,
+        start_iteration=0,
+        num_iteration=None,
+        pred_leaf=False,
+        pred_contrib=False,
+        validate_features=False,
+        num_threads=0,
+    ):
+        proba = self.predict_proba(
+            X, raw_score, start_iteration, num_iteration, pred_leaf, pred_contrib, validate_features, num_threads
+        )
+        if raw_score or pred_leaf:
+            return proba
+        return self.classes_[np.argmax(proba, axis=1)]  # as LightGBM
+
+    def predict_proba(
+        self,
+        X,
+        raw_score=False,
+        start_iteration=0,
+        num_iteration=None,
+        pred_leaf=False,
+        pred_contrib=False,
+        validate_features=False,
+        num_threads=0,
+    ):
+        p = super().predict(
+            X, raw_score, start_iteration, num_iteration, pred_leaf, pred_contrib, validate_features, num_threads
+        )
+        if raw_score or pred_leaf:
+            return p
+        return np.vstack((1.0 - p, p)).transpose()  # as LightGBM
 
 
 def _pandas_categorical(model_str):
