@@ -1,11 +1,14 @@
 //! Python module `fastleaves._core`; the user-facing API is in `python/fastleaves`.
 
 use crate::Error;
+use crate::forest::BLOCK;
 use pyo3::buffer::{Element, PyBuffer};
 use pyo3::create_exception;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::ops::Range;
+use std::sync::{Arc, Mutex};
 
 create_exception!(
     fastleaves,
@@ -60,7 +63,7 @@ impl Model {
         num_threads: usize,
     ) -> PyResult<()> {
         let (x, rows) = self.rows(&x, start..end)?;
-        let res = run(py, num_threads, rows, |res| self.0.predict(x, res, start..end, raw_score))?;
+        let res = run(py, num_threads, rows, rows, |res| self.0.predict(x, res, start..end, raw_score))?;
         write(py, &out, &res)
     }
 
@@ -77,7 +80,7 @@ impl Model {
     ) -> PyResult<()> {
         let (x, rows) = self.rows(&x, start..end)?;
         let forest = &self.0.forest;
-        let res = run(py, num_threads, rows * (end - start), |res| {
+        let res = run(py, num_threads, rows, rows * (end - start), |res| {
             forest.predict_leaf(x, res, start..end);
             Ok(())
         })?;
@@ -120,22 +123,40 @@ fn write<T: Element + Copy>(py: Python, out: &PyBuffer<T>, res: &[T]) -> PyResul
     out.copy_from_slice(py, res)
 }
 
-/// `len` outputs, computed by `f` on `num_threads` threads (0: all cores) without the GIL.
+/// `len` outputs for `rows` rows, computed by `f` on `num_threads` threads (0: all cores)
+/// without the GIL. Rows that fit in one block are computed on the calling thread.
 fn run<T: Default + Clone + Send>(
     py: Python,
     num_threads: usize,
+    rows: usize,
     len: usize,
     f: impl FnOnce(&mut [T]) -> Result<(), Error> + Send,
 ) -> PyResult<Vec<T>> {
     py.detach(|| {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(num_threads)
-            .build()
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
         let mut out = vec![T::default(); len];
-        pool.install(|| f(&mut out)).map_err(py_err)?;
+        if rows <= BLOCK {
+            f(&mut out).map_err(py_err)?;
+        } else {
+            pool(num_threads)?.install(|| f(&mut out)).map_err(py_err)?;
+        }
         Ok(out)
     })
+}
+
+/// The thread pool with `num_threads` threads (0: all cores), built on first use and kept, as
+/// starting threads on every call costs more than predicting a few thousand rows.
+fn pool(num_threads: usize) -> PyResult<Arc<ThreadPool>> {
+    static POOLS: Mutex<Vec<(usize, Arc<ThreadPool>)>> = Mutex::new(Vec::new());
+    let mut pools = POOLS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, p)) = pools.iter().find(|(n, _)| *n == num_threads) {
+        return Ok(p.clone());
+    }
+    let p = ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .build()
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    pools.push((num_threads, Arc::new(p)));
+    Ok(pools[pools.len() - 1].1.clone())
 }
 
 /// The SIMD path predictions use: "avx512" or "scalar".

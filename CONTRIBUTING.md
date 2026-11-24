@@ -62,6 +62,7 @@ Intel's emulator (see [tests/README.md](tests/README.md)).
 4. Push a tag `vX.Y.Z`.
 
 The release workflow (`.github/workflows/publish.yml`) builds one abi3 wheel for
-Python 3.11+, checks that it installs and imports with only numpy, runs all tests on both
-CPU paths against the installed wheel (AVX-512 on Intel's emulator), and publishes to PyPI
+Python 3.11+ each for Linux and Windows, checks that each installs and imports with only numpy,
+runs all tests on both CPU paths against the installed wheels (AVX-512 on Intel's emulator,
+Linux only), and publishes to PyPI
 by trusted publishing. Run it by hand for a dry run without the upload.

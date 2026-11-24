@@ -120,6 +120,18 @@ def test_thread_counts(threads, pred_leaf):
     check(train(*MODEL), rows(10_000), num_threads=threads, pred_leaf=pred_leaf)
 
 
+def test_concurrent_calls():
+    """Calls from several Python threads at once share fastleaves' thread pools."""
+    model = train(*MODEL)
+    booster = fastleaves.Booster.from_lightgbm(model)
+    x = rows(10_000)
+    expected = model.predict(x)
+    with ThreadPoolExecutor(8) as ex:
+        results = list(ex.map(lambda t: booster.predict(x, num_threads=t), [0, 2, 0, 2, 3, 0, 1, 2] * 2))
+    for got in results:
+        assert_bit_identical(got, expected)
+
+
 def test_model_file_and_string(tmp_path):
     model = train(*MODEL)
     model.save_model(tmp_path / "model.txt")
@@ -130,6 +142,16 @@ def test_model_file_and_string(tmp_path):
         assert booster.num_feature() == model.num_feature()
         assert booster.num_trees() == model.num_trees()
         assert booster.feature_name() == model.feature_name()
+
+
+def test_model_file_with_non_ascii_feature_names(tmp_path):
+    """LightGBM writes model files in UTF-8, whatever the system's default encoding (cp1252 on Windows)."""
+    x = pd.DataFrame(np.random.default_rng(0).standard_normal((500, 2)), columns=["größe", "温度"])
+    model = lightgbm.train({"verbose": -1}, lightgbm.Dataset(x, x.sum(axis=1)), 5)
+    model.save_model(tmp_path / "model.txt")
+    booster = fastleaves.Booster(model_file=tmp_path / "model.txt")
+    assert booster.feature_name() == model.feature_name() == ["größe", "温度"]
+    assert_bit_identical(booster.predict(x, validate_features=True), model.predict(x, validate_features=True))
 
 
 def test_isa_names_the_kernel():

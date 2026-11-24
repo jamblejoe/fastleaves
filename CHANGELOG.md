@@ -8,11 +8,22 @@ All notable changes to fastleaves. The format follows
 
 - `binary` and `cross_entropy` models predict probabilities (were raw scores only). A
   `binary` model's sigmoid is read from the model file exactly as LightGBM reads it.
+
+## [0.5.0] - 2026-11-23
+
+- Windows x86-64 is supported: a wheel for Windows is published, and CI runs all tests on
+  Windows too.
+- Model files are read as UTF-8, as LightGBM writes them. Before, feature names with
+  non-ASCII characters were garbled on systems whose default encoding is not UTF-8
+  (Windows), so `validate_features` rejected the matching DataFrame columns.
 - Loading a model with a very deep tree (up to 32,767 levels, as LightGBM allows) no longer
   crashes: model trees are read and freed with loops instead of recursion.
 - The README's scope table states two existing refusals: trees with more than 32,768 leaves,
   and features whose splits mix kinds or missing-value modes (from continued training on
   different data).
+- Batches of up to 4096 rows are predicted on the calling thread, without starting threads.
+- Thread pools are kept between calls instead of being started on every call (one per
+  `num_threads` value). Calls from several Python threads at once share a pool.
 
 ## [0.4.0] - 2026-11-20
 

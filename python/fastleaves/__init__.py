@@ -19,7 +19,7 @@ class Booster:
         if (model_file is None) == (model_str is None):
             raise TypeError("pass exactly one of model_file and model_str")
         if model_file is not None:
-            model_str = Path(model_file).read_text()
+            model_str = Path(model_file).read_text(encoding="utf-8")  # as LightGBM writes it
         self._model = _Model(model_str)
         self.pandas_categorical = _pandas_categorical(model_str)
         self.best_iteration = -1
