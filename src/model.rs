@@ -84,20 +84,31 @@ fn output(objective: &str) -> Result<Output, Error> {
         "regression" | "regression_l1" | "huber" | "fair" | "quantile" | "mape" => Ok(Output::Identity),
         "poisson" | "gamma" | "tweedie" => Ok(Output::Exp),
         "cross_entropy" => Ok(Output::Sigmoid(1.0)),
-        "binary" => {
-            let sigmoid = words.find_map(|w| w.strip_prefix("sigmoid:")).map(lightgbm_atof);
-            match sigmoid {
-                Some(s) if s > 0.0 => Ok(Output::Sigmoid(s)),
-                _ => Err(invalid(format!("objective {objective:?} without a positive sigmoid"))),
-            }
-        }
+        "binary" => match words.find_map(|w| w.strip_prefix("sigmoid:")).map(lightgbm_atof) {
+            Some(None) => Err(Error::unsupported(format!(
+                "output of a sigmoid with more than {MAX_FRACTION_DIGITS} digits after the decimal point"
+            ))),
+            Some(Some(s)) if s > 0.0 => Ok(Output::Sigmoid(s)),
+            _ => Err(invalid(format!("objective {objective:?} without a positive sigmoid"))),
+        },
         name => Err(Error::unsupported(format!("output of objective {name}"))),
     }
 }
 
-/// LightGBM's `Common::Atof`, with which it reads the sigmoid. It is not correctly rounded
-/// (`2.3892` is one double off), so `str::parse` would change some probabilities.
-fn lightgbm_atof(s: &str) -> f64 {
+/// The most digits after the decimal point `lightgbm_atof` reads (LightGBM writes at most 9).
+const MAX_FRACTION_DIGITS: usize = 22;
+
+/// `10^n` for `n` up to `MAX_FRACTION_DIGITS`, all exact. LightGBM's `Common::Pow(10.0, n)` gives
+/// these too; for longer fractions its order of multiplication changes the result.
+const POW10: [f64; MAX_FRACTION_DIGITS + 1] = [
+    1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18,
+    1e19, 1e20, 1e21, 1e22,
+];
+
+/// LightGBM's `Common::Atof`, with which it reads the sigmoid, or `None` for a fraction longer
+/// than `MAX_FRACTION_DIGITS`. It is not correctly rounded (`2.3892` is one double off), so
+/// `str::parse` would change some probabilities.
+fn lightgbm_atof(s: &str) -> Option<f64> {
     let (b, mut i) = (s.as_bytes(), 0);
     let sign = if b.first() == Some(&b'-') { -1.0 } else { 1.0 };
     if matches!(b.first(), Some(b'-' | b'+')) {
@@ -107,7 +118,7 @@ fn lightgbm_atof(s: &str) -> f64 {
     if b.get(i) == Some(&b'.') {
         i += 1;
         let fraction = digits(b, &mut i);
-        value += fraction.iter().fold(0.0, |r, &d| f64::from(d) + r * 10.0) / pow(10.0, fraction.len());
+        value += fraction.iter().fold(0.0, |r, &d| f64::from(d) + r * 10.0) / POW10.get(fraction.len())?;
     }
     let (mut scale, mut divide) = (1.0, false);
     if matches!(b.get(i), Some(b'e' | b'E')) {
@@ -126,7 +137,7 @@ fn lightgbm_atof(s: &str) -> f64 {
             }
         }
     }
-    sign * if divide { value / scale } else { value * scale }
+    Some(sign * if divide { value / scale } else { value * scale })
 }
 
 /// The values of the decimal digits at `b[*i..]`, moving `i` past them.
@@ -136,16 +147,6 @@ fn digits(b: &[u8], i: &mut usize) -> Vec<u8> {
         *i += 1;
     }
     b[start..*i].iter().map(|d| d - b'0').collect()
-}
-
-/// LightGBM's `Common::Pow`, which `lightgbm_atof` uses.
-fn pow(base: f64, n: usize) -> f64 {
-    match n {
-        0 => 1.0,
-        _ if n.is_multiple_of(2) => pow(base * base, n / 2),
-        _ if n.is_multiple_of(3) => pow(base * base * base, n / 3),
-        _ => base * pow(base, n - 1),
-    }
 }
 
 fn parse_tree(block: &str) -> Result<Node, Error> {
@@ -360,6 +361,8 @@ shrinkage=1";
             ("tweedie tweedie_variance_power:1.3", Some(Output::Exp)),
             ("binary sigmoid:1", Some(Output::Sigmoid(1.0))),
             ("binary sigmoid:0.5", Some(Output::Sigmoid(0.5))),
+            ("binary sigmoid:0.1234567890123456789012", Some(Output::Sigmoid(0.12345678901234568))),
+            ("binary sigmoid:0.12345678901234567890123", None),
             ("cross_entropy", Some(Output::Sigmoid(1.0))),
             ("regression sqrt", None),
             ("cross_entropy_lambda", None),
@@ -381,12 +384,14 @@ shrinkage=1";
     #[test]
     fn reads_the_sigmoid_as_lightgbm_does() {
         // LightGBM's reading differs from the correctly rounded one by a double for "2.3892"
-        assert_eq!(lightgbm_atof("2.3892"), f64::from_bits("2.3892".parse::<f64>().unwrap().to_bits() - 1));
+        let correct = "2.3892".parse::<f64>().unwrap();
+        assert_eq!(lightgbm_atof("2.3892"), Some(f64::from_bits(correct.to_bits() - 1)));
         let cases =
             [("1", 1.0), ("0.5", 0.5), ("+2", 2.0), ("-1.5", -1.5), ("1e-07", 1e-7), ("2.5E+3", 2500.0)];
         for (s, expected) in cases {
-            assert_eq!(lightgbm_atof(s), expected, "{s}");
+            assert_eq!(lightgbm_atof(s), Some(expected), "{s}");
         }
+        assert_eq!(lightgbm_atof(&format!("0.{}", "1".repeat(23))), None);
     }
 
     #[test]
