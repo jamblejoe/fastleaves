@@ -12,7 +12,9 @@ from ._core import UnsupportedError
 
 
 class Booster:
-    """A LightGBM model for prediction. Unsupported models raise `UnsupportedError`."""
+    """A LightGBM model for prediction, from a model file or string as `lightgbm.Booster`
+    takes them; `from_lightgbm` and `from_sklearn` copy a LightGBM object in memory.
+    Unsupported models raise `UnsupportedError`."""
 
     def __init__(self, model_file=None, model_str=None):
         if (model_file is None) == (model_str is None):
