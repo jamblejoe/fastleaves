@@ -30,10 +30,10 @@ fast.predict_proba(X)                      # == model.predict_proba(X), classifi
 
 The methods take the same arguments as LightGBM's, in the same order, and return the same
 values, bit for bit: float64 predictions, int32 leaf indices with `pred_leaf=True`, the
-model's class labels from a classifier's `predict`. `X` is a numpy array, list of
-lists or pandas DataFrame. The early-stopping iteration carries over; `num_threads` defaults to all cores
-(a scikit-learn model's `n_jobs` is not copied). A model file holds only the booster: a
-classifier saved with `model.booster_.save_model` predicts like `model.booster_`, the
+model's class labels from a classifier's `predict`. `X` is a numpy array, list of lists or
+pandas DataFrame. The early-stopping iteration carries over; `num_threads` defaults to all
+cores (a scikit-learn model's `n_jobs` is not copied). A model file holds only the booster:
+a classifier saved with `model.booster_.save_model` predicts like `model.booster_`, the
 probability of the second class, without labels.
 
 fastleaves is built for thousands to millions of rows per call; small batches work but are
