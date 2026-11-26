@@ -79,6 +79,21 @@ def test_predictions(name, method, options):
     assert_identical(getattr(fast, method)(rows, **OPTIONS[options]), expected)
 
 
+@pytest.mark.parametrize("num_threads", [1, 2, 3, 0])
+@pytest.mark.parametrize("name", MODELS)
+def test_thread_counts(name, num_threads):
+    """20,000 rows: more than one block, so more than one thread works on them."""
+    model, rows = fitted(name)
+    many, _ = frame(20_000, 3)
+    if isinstance(rows, np.ndarray):
+        many = many[["a", "b"]].to_numpy()
+    fast = fastleaves.from_sklearn(model)
+    for method in ["predict", "predict_proba"]:
+        if hasattr(model, method):
+            expected = getattr(model, method)(many, num_threads=num_threads)
+            assert_identical(getattr(fast, method)(many, num_threads=num_threads), expected)
+
+
 @pytest.mark.parametrize("name", MODELS)
 def test_positional_arguments(name):
     """The model's order: X, raw_score, start_iteration, num_iteration, pred_leaf."""
