@@ -252,16 +252,16 @@ impl Forest {
         Ok(())
     }
 
-    /// The bins of the rows of `x` (at most `1 << bits`), slot by slot, `1 << bits` bytes per
-    /// slot; 3 bytes of padding at the end, as SIMD reads 4 bytes.
-    fn bin_block(&self, x: &[f64], bits: u32) -> Vec<u8> {
-        let mut bins = vec![0u8; (self.slots.len() << bits) + 3];
+    /// Writes to `bins` the bins of the rows of `x` (at most `1 << bits`), slot by slot,
+    /// `1 << bits` bytes per slot; 3 bytes of padding at the end, as SIMD reads 4 bytes. Bytes
+    /// after a slot's rows keep what `bins` held: the kernels read only the rows of `x`.
+    fn bin_block(&self, x: &[f64], bits: u32, bins: &mut Vec<u8>) {
+        bins.resize((self.slots.len() << bits) + 3, 0);
         for (r, row) in x.chunks(self.n_features.max(1)).enumerate() {
             for (s, (feature, &c)) in self.slots.iter().zip(&self.columns).enumerate() {
                 bins[(s << bits) + r] = bin(feature, row[c]);
             }
         }
-        bins
     }
 
     /// Raw score of each row of the row-major matrix `x`: the sum of the leaf values of
@@ -311,31 +311,32 @@ impl Forest {
         let rows = out.len() / width;
         let block_rows = block_rows(rows, rayon::current_num_threads());
         let bits = block_rows.next_power_of_two().trailing_zeros();
-        let block = |(out, x): (&mut [T], &[f64])| {
+        // `bins` and `leaf_of` are reused from block to block, so each thread allocates them once
+        let block = |(bins, leaf_of): &mut (Vec<u8>, Vec<u32>), (out, x): (&mut [T], &[f64])| {
             let n = out.len() / width;
-            let bins = self.bin_block(x, bits);
-            let mut leaf_of = vec![0u32; n];
+            self.bin_block(x, bits, bins);
+            leaf_of.resize(n, 0); // every row's leaf is written for each tree below
             for (k, &root) in self.roots[trees.clone()].iter().enumerate() {
                 let tree = &self.nodes[root..];
                 if is_leaf(tree[0]) {
                     leaf_of.fill(0);
                 } else if let Some(s) = simd {
-                    s.leaves(tree, &self.sets, &bins, bits, &mut leaf_of);
+                    s.leaves(tree, &self.sets, bins, bits, leaf_of);
                 } else {
                     for (r, l) in leaf_of.iter_mut().enumerate() {
-                        *l = leaf_scalar(tree, &self.sets, &bins, bits, r);
+                        *l = leaf_scalar(tree, &self.sets, bins, bits, r);
                     }
                 }
-                f(out, k, root, &leaf_of);
+                f(out, k, root, leaf_of);
             }
         };
         match rows {
             0 => {}
-            n if n <= BLOCK => block((out, x)), // one block: on the calling thread
+            n if n <= BLOCK => block(&mut Default::default(), (out, x)), // one block: on the calling thread
             _ => out
                 .par_chunks_mut(block_rows * width)
                 .zip(x.par_chunks(block_rows * nf.max(1)))
-                .for_each(block),
+                .for_each_init(Default::default, block),
         }
     }
 }
@@ -579,9 +580,10 @@ mod tests {
                 let Some(simd) = Avx512::detect() else { continue };
                 let rows = n.min(BLOCK);
                 let fits = rows.next_power_of_two().trailing_zeros();
-                for bits in [fits, fits + 1, BLOCK_BITS] {
+                let mut bins = vec![0xAB; 5]; // reused, as by `for_each_tree`: bytes of earlier strides stay
+                for bits in [BLOCK_BITS, fits + 1, fits] {
                     let bits = bits.min(BLOCK_BITS);
-                    let bins = forest.bin_block(&x[..rows * nf], bits);
+                    forest.bin_block(&x[..rows * nf], bits, &mut bins);
                     for &root in &forest.roots {
                         let tree = &forest.nodes[root..];
                         if is_leaf(tree[0]) {
