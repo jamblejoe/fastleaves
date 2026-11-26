@@ -9,25 +9,32 @@ pip install fastleaves
 ```python
 import fastleaves
 
-# a lightgbm.Booster (from lightgbm.train)
-fast = fastleaves.from_lightgbm(booster)   # or fastleaves.Booster(model_file="model.txt")
-fast.predict(X)               # == booster.predict(X)
-
-# a fitted LGBMRegressor or LGBMClassifier (binary)
-fast = fastleaves.from_sklearn(model)
-fast.predict(X)               # == model.predict(X): class labels for a classifier
-fast.predict_proba(X)         # == model.predict_proba(X), classifiers only
+fast = fastleaves.Booster(model_file="model.txt")   # saved by LightGBM; or model_str=...
+pred = fast.predict(X)                               # == LightGBM's predict on this file
 ```
 
-`fastleaves.Booster` takes what `lightgbm.Booster` takes, a `model_file` or a `model_str`;
-the `from_` functions copy a LightGBM object in memory. Either way, the methods take the
-same arguments as LightGBM's, in the same order, and return the same values, bit for bit:
-float64 predictions, int32 leaf indices with `pred_leaf=True`, the model's class labels from
-a classifier's `predict`. `X` is a numpy array or pandas DataFrame. The early-stopping
-iteration carries over; `num_threads` defaults to all cores (a scikit-learn model's `n_jobs`
-is not copied). A model file holds only the booster: `Booster(model_file=...)` of a saved
-`model.booster_` predicts like `model.booster_`, the probability of the second class for a
-classifier, without labels.
+LightGBM is not needed for this: fastleaves reads the model file itself, so a service that
+only predicts installs fastleaves and numpy. `Booster` takes what `lightgbm.Booster` takes, a
+`model_file` or a `model_str`.
+
+Where the LightGBM model is at hand, in the process that trained it, copy it:
+
+```python
+fast = fastleaves.from_lightgbm(booster)   # a lightgbm.Booster (from lightgbm.train)
+fast.predict(X)                            # == booster.predict(X)
+
+fast = fastleaves.from_sklearn(model)      # a fitted LGBMRegressor or LGBMClassifier (binary)
+fast.predict(X)                            # == model.predict(X): class labels for a classifier
+fast.predict_proba(X)                      # == model.predict_proba(X), classifiers only
+```
+
+The methods take the same arguments as LightGBM's, in the same order, and return the same
+values, bit for bit: float64 predictions, int32 leaf indices with `pred_leaf=True`, the
+model's class labels from a classifier's `predict`. `X` is a numpy array or pandas
+DataFrame. The early-stopping iteration carries over; `num_threads` defaults to all cores
+(a scikit-learn model's `n_jobs` is not copied). A model file holds only the booster: a
+classifier saved with `model.booster_.save_model` predicts like `model.booster_`, the
+probability of the second class, without labels.
 
 fastleaves is built for thousands to millions of rows per call; small batches work but are
 not optimized. Refusals (see the scope below) raise `fastleaves.UnsupportedError`, a
