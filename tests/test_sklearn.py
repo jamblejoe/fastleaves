@@ -126,7 +126,7 @@ def test_wrong_kind_of_model():
 
 
 def test_deprecated_booster_from_lightgbm():
-    """`Booster.from_lightgbm` (0.5.0) warns and returns what `from_lightgbm` returns."""
+    """`Booster.from_lightgbm`, the API up to 0.6.0, warns and returns what `from_lightgbm` returns."""
     regressor, rows = fitted("regressor, early stopping")
     for cls in [fastleaves.Booster, fastleaves.Classifier]:
         with pytest.warns(FutureWarning, match="use fastleaves.from_lightgbm"):
