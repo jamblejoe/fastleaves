@@ -21,18 +21,19 @@ LightGBM rejects too raise LightGBM's `ValueError`.
 
 ### scikit-learn models
 
-`from_lightgbm` also copies a fitted `LGBMRegressor` or `LGBMClassifier` (binary). The copy's
+For a fitted `LGBMRegressor` or `LGBMClassifier` (binary), `from_sklearn` makes a copy whose
 `predict` and `predict_proba` take the model's arguments and return what the model's return:
 
 ```python
-fast = fastleaves.Booster.from_lightgbm(model)
-fast.predict(X)         # == model.predict(X), class labels for a classifier
+model = lightgbm.LGBMClassifier().fit(X_train, y_train)   # or LGBMRegressor
+fast = fastleaves.from_sklearn(model)
+fast.predict(X)         # == model.predict(X): class labels for a classifier
 fast.predict_proba(X)   # == model.predict_proba(X), classifiers only
 ```
 
 The early-stopping iteration carries over; `n_jobs` does not, so pass `num_threads`.
-A copy saved with `model.booster_.save_model` and loaded with `Booster` predicts like
-`model.booster_`: the probability of the second class, no labels.
+`Booster.from_lightgbm(model.booster_)`, or a file saved with `model.booster_.save_model`,
+predicts like `model.booster_`: the probability of the second class, no labels.
 
 ## Guarantees
 

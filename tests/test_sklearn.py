@@ -1,4 +1,4 @@
-"""scikit-learn models of LightGBM: `Booster.from_lightgbm(model)` predicts what `model` predicts."""
+"""scikit-learn models of LightGBM: `from_sklearn(model)` predicts what `model` predicts."""
 
 import functools
 
@@ -74,7 +74,7 @@ def test_predictions(name, method, options):
     model, rows = fitted(name)
     if not hasattr(model, method):
         pytest.skip(f"{type(model).__name__} has no {method}")
-    fast = fastleaves.Booster.from_lightgbm(model)
+    fast = fastleaves.from_sklearn(model)
     expected = getattr(model, method)(rows, **OPTIONS[options])
     assert_identical(getattr(fast, method)(rows, **OPTIONS[options]), expected)
 
@@ -83,7 +83,7 @@ def test_predictions(name, method, options):
 def test_positional_arguments(name):
     """The model's order: X, raw_score, start_iteration, num_iteration, pred_leaf."""
     model, rows = fitted(name)
-    fast = fastleaves.Booster.from_lightgbm(model)
+    fast = fastleaves.from_sklearn(model)
     for args in [(True,), (False, 2, 3), (False, 0, None, True)]:
         assert_identical(fast.predict(rows, *args), model.predict(rows, *args))
 
@@ -91,21 +91,35 @@ def test_positional_arguments(name):
 def test_types():
     regressor, _ = fitted("regressor, early stopping")
     classifier, _ = fitted("classifier, string labels, early stopping")
-    assert type(fastleaves.Booster.from_lightgbm(regressor)) is fastleaves.Estimator
-    assert type(fastleaves.Booster.from_lightgbm(regressor.booster_)) is fastleaves.Booster
-    fast = fastleaves.Booster.from_lightgbm(classifier)
+    assert type(fastleaves.from_sklearn(regressor)) is fastleaves.Estimator
+    fast = fastleaves.from_sklearn(classifier)
     assert type(fast) is fastleaves.Classifier
     assert fast.best_iteration == classifier.best_iteration_ > 0
     assert list(fast.classes_) == ["no", "yes"] and fast.classes_ is not classifier.classes_
 
 
+def test_wrong_kind_of_model():
+    """A scikit-learn model goes to `from_sklearn`, its `booster_` to `Booster.from_lightgbm`."""
+    regressor, _ = fitted("regressor, early stopping")
+    with pytest.raises(TypeError, match="from_sklearn"):
+        fastleaves.Booster.from_lightgbm(regressor)
+    with pytest.raises(TypeError, match="Booster.from_lightgbm"):
+        fastleaves.from_sklearn(regressor.booster_)
+    with pytest.raises(TypeError, match="not a scikit-learn model of LightGBM: ndarray"):
+        fastleaves.from_sklearn(np.zeros((3, 3)))
+    with pytest.raises(TypeError):  # made only from a scikit-learn model, so it has classes_
+        fastleaves.Classifier.from_lightgbm(regressor.booster_)
+    assert type(fastleaves.Booster.from_lightgbm(regressor.booster_)) is fastleaves.Booster
+
+
 def test_not_fitted():
-    with pytest.raises(NotFittedError):
-        fastleaves.Booster.from_lightgbm(lightgbm.LGBMClassifier())
+    for model in [lightgbm.LGBMRegressor(), lightgbm.LGBMClassifier()]:
+        with pytest.raises(NotFittedError):
+            fastleaves.from_sklearn(model)
 
 
 def test_multiclass_classifier_refused():
     x, y = frame(300, 0)
     model = lightgbm.LGBMClassifier(n_estimators=3, verbose=-1).fit(x, np.digitize(y, [0, 1]))
     with pytest.raises(UnsupportedError):
-        fastleaves.Booster.from_lightgbm(model)
+        fastleaves.from_sklearn(model)

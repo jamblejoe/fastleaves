@@ -6,10 +6,11 @@ All notable changes to fastleaves. The format follows
 
 ## [Unreleased]
 
-- `Booster.from_lightgbm` also takes a fitted scikit-learn model of LightGBM. An
+- `fastleaves.from_sklearn(model)` copies a fitted scikit-learn model of LightGBM. An
   `LGBMClassifier` (binary) becomes a `fastleaves.Classifier`, whose `predict` returns class
   labels and `predict_proba` class probabilities; others (`LGBMRegressor`, ...) become a
   `fastleaves.Estimator`. Both take `predict`'s arguments in the model's order.
+  `Booster.from_lightgbm` refuses scikit-learn models and points to `from_sklearn`.
 - `binary` and `cross_entropy` models predict probabilities (were raw scores only). A
   `binary` model's sigmoid is read from the model file exactly as LightGBM reads it; a sigmoid
   with more than 22 digits after the decimal point is refused (raw scores only).
