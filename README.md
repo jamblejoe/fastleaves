@@ -92,7 +92,8 @@ LGBMBench 36b711d, a pre-release build of fastleaves): a 1,500-tree Poisson mode
 Each input value becomes its position among the model's split thresholds, so comparisons
 are small integer compares. Only the columns the model splits on are read. AVX-512 runs 16 rows through a tree at once without branching;
 a lane takes a new row as soon as its row reaches a leaf. Rows are processed in cache-sized
-blocks, one tree at a time, and summed in LightGBM's order.
+blocks of up to 4,096 rows (smaller, down to 256, so that every thread gets rows), one tree at a
+time, and summed in LightGBM's order.
 
 ## Contributing
 
