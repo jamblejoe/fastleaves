@@ -9,17 +9,41 @@ pip install fastleaves
 ```python
 import fastleaves
 
-booster = fastleaves.Booster(model_file="model.txt")   # or model_str=..., or Booster.from_lightgbm(b)
-pred = booster.predict(X, num_threads=8)                # X: numpy array or pandas DataFrame
+fast = fastleaves.Booster(model_file="model.txt")   # saved by LightGBM; or model_str=...
+pred = fast.predict(X)                               # == LightGBM's predict on this file
 ```
 
-`predict` takes the same arguments as `lightgbm.Booster.predict` and returns the same
-float64 values, bit for bit (int32 leaf indices with `pred_leaf=True`). It is built for thousands to millions of rows per call;
-small batches work but are not optimized.
+LightGBM is not needed for this: fastleaves reads the model file itself, so a service that
+only predicts installs fastleaves and numpy. `Booster` takes what `lightgbm.Booster` takes, a
+`model_file` or a `model_str`.
+
+Where the LightGBM model is at hand, in the process that trained it, copy it:
+
+```python
+fast = fastleaves.from_lightgbm(booster)   # a lightgbm.Booster (from lightgbm.train)
+fast.predict(X)                            # == booster.predict(X)
+
+fast = fastleaves.from_sklearn(model)      # a fitted LGBMRegressor or LGBMClassifier (binary)
+fast.predict(X)                            # == model.predict(X): class labels for a classifier
+fast.predict_proba(X)                      # == model.predict_proba(X), classifiers only
+```
+
+The methods take the same arguments as LightGBM's, in the same order, and return the same
+values, bit for bit: float64 predictions, int32 leaf indices with `pred_leaf=True`, the
+model's class labels from a classifier's `predict`. `X` is a numpy array, list of lists or
+pandas DataFrame. The early-stopping iteration carries over; `num_threads` defaults to all
+cores (a scikit-learn model's `n_jobs` is not copied). A model file holds only the booster:
+a classifier saved with `model.booster_.save_model` predicts like `model.booster_`, the
+probability of the second class, without labels.
+
+fastleaves is built for thousands to millions of rows per call; small batches work but are
+not optimized. Refusals (see the scope below) raise `fastleaves.UnsupportedError`, a
+`ValueError`; inputs that LightGBM rejects too raise LightGBM's `ValueError`.
 
 ## Guarantees
 
-1. **Identical results.** Output equals `lightgbm.Booster.predict` (`numpy.array_equal`)
+1. **Identical results.** Output equals LightGBM's (`numpy.array_equal`): that of
+   `lightgbm.Booster.predict`, and of `predict` and `predict_proba` for scikit-learn models,
    for every supported model, input, option, thread count and CPU. Reference: LightGBM 4.x.
 2. **No silent fallback.** Unsupported models raise an error at load time; unsupported
    inputs and options raise at call time. LightGBM is not needed at runtime.
@@ -33,7 +57,7 @@ small batches work but are not optimized.
 | Size | up to 256 features used in splits (any number of input columns), 254 thresholds per feature (enough for LightGBM's default `max_bin=255`), 32,768 leaves per tree | larger models |
 | Missing values | all modes (`None`, `NaN`, `Zero`) | different modes on one feature (continued training, see below) |
 | Output | `regression`, `regression_l1`, `huber`, `fair`, `quantile`, `mape`, `poisson`, `gamma`, `tweedie`, `binary`, `cross_entropy`; any single-output objective with `raw_score=True` | `sqrt` regression and `cross_entropy_lambda` outputs, a `binary` sigmoid with more than 22 digits after the decimal point (LightGBM writes at most 9), random-forest mode, multiclass, linear trees |
-| Input | 2D numpy (float64, float32, integer); pandas DataFrame incl. categorical columns | sparse matrices, 1D input |
+| Input | 2D numpy (float64, float32, integer); list of lists; pandas DataFrame incl. categorical columns | sparse matrices, 1D input |
 | `predict` options | `start_iteration`, `num_iteration`, `raw_score`, `pred_leaf`, `validate_features`, `num_threads` (default: all cores) | `pred_contrib`, other options |
 | Platform | Linux and Windows x86-64, Python 3.11+; fast path on AVX-512 CPUs, slower scalar path elsewhere | macOS |
 

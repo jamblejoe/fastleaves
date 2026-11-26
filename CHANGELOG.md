@@ -6,6 +6,17 @@ All notable changes to fastleaves. The format follows
 
 ## [Unreleased]
 
+- `fastleaves.from_sklearn(model)` copies a fitted scikit-learn model of LightGBM. An
+  `LGBMClassifier` (binary) becomes a `fastleaves.Classifier`, whose `predict` returns class
+  labels and `predict_proba` class probabilities; others (`LGBMRegressor`, ...) become a
+  `fastleaves.Estimator`. Both take `predict`'s arguments in the model's order.
+  The README's first guarantee (identical results) covers their `predict` and `predict_proba`.
+- `fastleaves.from_lightgbm(booster)` copies a `lightgbm.Booster`. It refuses scikit-learn
+  models and points to `from_sklearn`.
+- Deprecated: `Booster.from_lightgbm`. It still works, with a `FutureWarning`; use
+  `fastleaves.from_lightgbm`. It will be removed in a later release.
+- The README's scope table states an existing input: a list of lists.
+
 ## [0.6.0] - 2026-11-24
 
 - `binary` and `cross_entropy` models predict probabilities (were raw scores only). A

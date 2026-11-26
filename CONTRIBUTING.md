@@ -20,7 +20,8 @@ Intel's emulator (see [tests/README.md](tests/README.md)).
 - `src/model.rs` reads LightGBM model files.
 - `src/forest.rs` bins inputs and holds the scalar kernel.
 - `src/avx512.rs` is the SIMD kernel.
-- `src/python.rs` and `python/fastleaves` are the Python API.
+- `src/python.rs` and `python/fastleaves` are the Python API: `_booster.py` the `Booster`
+  and its input conversion, `_sklearn.py` the copies of scikit-learn models.
 - `tests/` holds the Python tests, described in [tests/README.md](tests/README.md): every
   prediction against LightGBM's, and every refusal. The Rust tests, next to the code in
   `src/`, check what needs no LightGBM: the SIMD kernel against the scalar one, and the

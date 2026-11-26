@@ -37,7 +37,7 @@ PRED_LEAF = pytest.mark.parametrize("pred_leaf", [False, True], ids=["prediction
 def check(model, data, **options):
     """fastleaves predicts on `data` exactly what LightGBM predicts."""
     expected = model.predict(data, **options)
-    assert_bit_identical(fastleaves.Booster.from_lightgbm(model).predict(data, **options), expected)
+    assert_bit_identical(fastleaves.from_lightgbm(model).predict(data, **options), expected)
 
 
 def rows(n, dataset="with NaN"):
@@ -68,7 +68,7 @@ def test_no_rows():
     model = train(*MODEL)
     check(model, rows(0))
     # LightGBM fails here (ZeroDivisionError when it reshapes); fastleaves returns no rows
-    leaves = fastleaves.Booster.from_lightgbm(model).predict(rows(0), pred_leaf=True)
+    leaves = fastleaves.from_lightgbm(model).predict(rows(0), pred_leaf=True)
     assert_bit_identical(leaves, np.zeros((0, model.num_trees()), dtype=np.int32))
 
 
@@ -123,7 +123,7 @@ def test_thread_counts(threads, pred_leaf):
 def test_concurrent_calls():
     """Calls from several Python threads at once share fastleaves' thread pools."""
     model = train(*MODEL)
-    booster = fastleaves.Booster.from_lightgbm(model)
+    booster = fastleaves.from_lightgbm(model)
     x = rows(10_000)
     expected = model.predict(x)
     with ThreadPoolExecutor(8) as ex:
@@ -299,9 +299,9 @@ def test_validate_features(data):
         expected = model.predict(df, validate_features=True)
     except lightgbm.basic.LightGBMError as e:
         with pytest.raises(ValueError, match=f"^{re.escape(str(e))}$"):
-            fastleaves.Booster.from_lightgbm(model).predict(df, validate_features=True)
+            fastleaves.from_lightgbm(model).predict(df, validate_features=True)
     else:
-        assert_bit_identical(fastleaves.Booster.from_lightgbm(model).predict(df, validate_features=True), expected)
+        assert_bit_identical(fastleaves.from_lightgbm(model).predict(df, validate_features=True), expected)
 
 
 DATASET_MODELS = [("regression", d, "deep trees") for d in DATASETS]

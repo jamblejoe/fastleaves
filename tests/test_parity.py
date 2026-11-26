@@ -49,6 +49,6 @@ def test_parity(objective, dataset, training, predict):
     x, options = input_rows(dataset, model), PREDICT[predict]
     if why_unsupported(objective, training, options):
         with pytest.raises(fastleaves.UnsupportedError):
-            fastleaves.Booster.from_lightgbm(model).predict(x, **options)
+            fastleaves.from_lightgbm(model).predict(x, **options)
     else:
-        assert_bit_identical(fastleaves.Booster.from_lightgbm(model).predict(x, **options), model.predict(x, **options))
+        assert_bit_identical(fastleaves.from_lightgbm(model).predict(x, **options), model.predict(x, **options))
