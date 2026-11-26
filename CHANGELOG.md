@@ -14,6 +14,7 @@ All notable changes to fastleaves. The format follows
   models and points to `from_sklearn`.
 - Deprecated: `Booster.from_lightgbm`. It still works, with a `FutureWarning`; use
   `fastleaves.from_lightgbm`. It will be removed in a later release.
+- The README's scope table states an existing input: a list of lists.
 - `binary` and `cross_entropy` models predict probabilities (were raw scores only). A
   `binary` model's sigmoid is read from the model file exactly as LightGBM reads it; a sigmoid
   with more than 22 digits after the decimal point is refused (raw scores only).

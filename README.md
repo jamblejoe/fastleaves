@@ -30,8 +30,8 @@ fast.predict_proba(X)                      # == model.predict_proba(X), classifi
 
 The methods take the same arguments as LightGBM's, in the same order, and return the same
 values, bit for bit: float64 predictions, int32 leaf indices with `pred_leaf=True`, the
-model's class labels from a classifier's `predict`. `X` is a numpy array or pandas
-DataFrame. The early-stopping iteration carries over; `num_threads` defaults to all cores
+model's class labels from a classifier's `predict`. `X` is a numpy array, list of
+lists or pandas DataFrame. The early-stopping iteration carries over; `num_threads` defaults to all cores
 (a scikit-learn model's `n_jobs` is not copied). A model file holds only the booster: a
 classifier saved with `model.booster_.save_model` predicts like `model.booster_`, the
 probability of the second class, without labels.
@@ -56,7 +56,7 @@ not optimized. Refusals (see the scope below) raise `fastleaves.UnsupportedError
 | Size | up to 256 features used in splits (any number of input columns), 254 thresholds per feature (enough for LightGBM's default `max_bin=255`), 32,768 leaves per tree | larger models |
 | Missing values | all modes (`None`, `NaN`, `Zero`) | different modes on one feature (continued training, see below) |
 | Output | `regression`, `regression_l1`, `huber`, `fair`, `quantile`, `mape`, `poisson`, `gamma`, `tweedie`, `binary`, `cross_entropy`; any single-output objective with `raw_score=True` | `sqrt` regression and `cross_entropy_lambda` outputs, a `binary` sigmoid with more than 22 digits after the decimal point (LightGBM writes at most 9), random-forest mode, multiclass, linear trees |
-| Input | 2D numpy (float64, float32, integer); pandas DataFrame incl. categorical columns | sparse matrices, 1D input |
+| Input | 2D numpy (float64, float32, integer); list of lists; pandas DataFrame incl. categorical columns | sparse matrices, 1D input |
 | `predict` options | `start_iteration`, `num_iteration`, `raw_score`, `pred_leaf`, `validate_features`, `num_threads` (default: all cores) | `pred_contrib`, other options |
 | Platform | Linux and Windows x86-64, Python 3.11+; fast path on AVX-512 CPUs, slower scalar path elsewhere | macOS |
 
