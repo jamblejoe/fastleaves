@@ -42,7 +42,8 @@ not optimized. Refusals (see the scope below) raise `fastleaves.UnsupportedError
 
 ## Guarantees
 
-1. **Identical results.** Output equals `lightgbm.Booster.predict` (`numpy.array_equal`)
+1. **Identical results.** Output equals LightGBM's (`numpy.array_equal`): that of
+   `lightgbm.Booster.predict`, and of `predict` and `predict_proba` for scikit-learn models,
    for every supported model, input, option, thread count and CPU. Reference: LightGBM 4.x.
 2. **No silent fallback.** Unsupported models raise an error at load time; unsupported
    inputs and options raise at call time. LightGBM is not needed at runtime.

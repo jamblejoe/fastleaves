@@ -10,6 +10,7 @@ All notable changes to fastleaves. The format follows
   `LGBMClassifier` (binary) becomes a `fastleaves.Classifier`, whose `predict` returns class
   labels and `predict_proba` class probabilities; others (`LGBMRegressor`, ...) become a
   `fastleaves.Estimator`. Both take `predict`'s arguments in the model's order.
+  The README's first guarantee (identical results) covers their `predict` and `predict_proba`.
 - `fastleaves.from_lightgbm(booster)` copies a `lightgbm.Booster`. It refuses scikit-learn
   models and points to `from_sklearn`.
 - Deprecated: `Booster.from_lightgbm`. It still works, with a `FutureWarning`; use
