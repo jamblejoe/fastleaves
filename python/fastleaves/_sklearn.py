@@ -9,7 +9,7 @@ def from_sklearn(model):
     """Copy of a fitted scikit-learn model of LightGBM: a `Classifier` for an `LGBMClassifier`,
     an `Estimator` for others (`LGBMRegressor`, ...)."""
     if not hasattr(type(model), "booster_"):
-        hint = ": use fastleaves.Booster.from_lightgbm" if hasattr(model, "model_to_string") else ""
+        hint = ": use fastleaves.from_lightgbm" if hasattr(model, "model_to_string") else ""
         raise TypeError(f"not a scikit-learn model of LightGBM: {type(model).__name__}{hint}")
     return (Classifier if hasattr(type(model), "classes_") else Estimator)(model)
 

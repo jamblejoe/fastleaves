@@ -99,17 +99,27 @@ def test_types():
 
 
 def test_wrong_kind_of_model():
-    """A scikit-learn model goes to `from_sklearn`, its `booster_` to `Booster.from_lightgbm`."""
+    """A scikit-learn model goes to `from_sklearn`, its `booster_` to `from_lightgbm`."""
     regressor, _ = fitted("regressor, early stopping")
     with pytest.raises(TypeError, match="from_sklearn"):
-        fastleaves.Booster.from_lightgbm(regressor)
-    with pytest.raises(TypeError, match="Booster.from_lightgbm"):
+        fastleaves.from_lightgbm(regressor)
+    with pytest.raises(TypeError, match="use fastleaves.from_lightgbm"):
         fastleaves.from_sklearn(regressor.booster_)
     with pytest.raises(TypeError, match="not a scikit-learn model of LightGBM: ndarray"):
         fastleaves.from_sklearn(np.zeros((3, 3)))
-    with pytest.raises(TypeError):  # made only from a scikit-learn model, so it has classes_
-        fastleaves.Classifier.from_lightgbm(regressor.booster_)
-    assert type(fastleaves.Booster.from_lightgbm(regressor.booster_)) is fastleaves.Booster
+    assert type(fastleaves.from_lightgbm(regressor.booster_)) is fastleaves.Booster
+
+
+def test_deprecated_booster_from_lightgbm():
+    """`Booster.from_lightgbm` (0.5.0) warns and returns what `from_lightgbm` returns."""
+    regressor, rows = fitted("regressor, early stopping")
+    for cls in [fastleaves.Booster, fastleaves.Classifier]:
+        with pytest.warns(FutureWarning, match="use fastleaves.from_lightgbm"):
+            copy = cls.from_lightgbm(regressor.booster_)
+        assert type(copy) is fastleaves.Booster and copy.best_iteration == regressor.best_iteration_
+        assert_bit_identical(copy.predict(rows), regressor.booster_.predict(rows))
+    with pytest.warns(FutureWarning), pytest.raises(TypeError, match="from_sklearn"):
+        fastleaves.Booster.from_lightgbm(regressor)
 
 
 def test_not_fitted():

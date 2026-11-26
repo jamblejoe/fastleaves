@@ -10,7 +10,7 @@ pip install fastleaves
 import fastleaves
 
 # a lightgbm.Booster (from lightgbm.train)
-fast = fastleaves.Booster.from_lightgbm(booster)   # or Booster(model_file="model.txt")
+fast = fastleaves.from_lightgbm(booster)   # or fastleaves.Booster(model_file="model.txt")
 fast.predict(X)               # == booster.predict(X)
 
 # a fitted LGBMRegressor or LGBMClassifier (binary)

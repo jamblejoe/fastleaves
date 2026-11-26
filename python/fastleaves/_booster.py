@@ -1,7 +1,8 @@
-"""`Booster`: a LightGBM model, and its inputs converted as LightGBM converts them."""
+"""`Booster`: a LightGBM model, `from_lightgbm`, and its inputs converted as LightGBM converts them."""
 
 import json
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -22,14 +23,13 @@ class Booster:
         self.pandas_categorical = _pandas_categorical(model_str)
         self.best_iteration = -1
 
-    @classmethod
-    def from_lightgbm(cls, booster):
-        """Copy of a `lightgbm.Booster`."""
-        if hasattr(type(booster), "booster_"):
-            raise TypeError("a scikit-learn model: use fastleaves.from_sklearn(model)")
-        copy = cls(model_str=booster.model_to_string(num_iteration=-1))
-        copy.best_iteration = booster.best_iteration
-        return copy
+    @staticmethod
+    def from_lightgbm(booster):
+        """Deprecated: use `fastleaves.from_lightgbm`."""
+        warnings.warn(
+            "Booster.from_lightgbm is deprecated; use fastleaves.from_lightgbm", FutureWarning, stacklevel=2
+        )
+        return from_lightgbm(booster)
 
     def num_feature(self):
         return self._model.num_features
@@ -87,6 +87,15 @@ class Booster:
         for i, (e, name) in enumerate(zip(expected, names)):
             if e != name:
                 raise ValueError(f"Expected '{e}' at position {i} but found '{name}'")
+
+def from_lightgbm(booster):
+    """Copy of a `lightgbm.Booster`."""
+    if hasattr(type(booster), "booster_"):
+        raise TypeError("a scikit-learn model: use fastleaves.from_sklearn(model)")
+    copy = Booster(model_str=booster.model_to_string(num_iteration=-1))
+    copy.best_iteration = booster.best_iteration
+    return copy
+
 
 def _pandas_categorical(model_str):
     """The category lists LightGBM saved for pandas categorical columns, or None."""

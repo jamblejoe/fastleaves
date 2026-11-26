@@ -89,7 +89,7 @@ def test_unsupported_model_fails_to_load(model):
         if isinstance(model, str):
             fastleaves.Booster(model_str=model)
         else:
-            fastleaves.Booster.from_lightgbm(model)
+            fastleaves.from_lightgbm(model)
 
 
 def cross_entropy_lambda_model():
@@ -107,8 +107,8 @@ def long_sigmoid_model():
 
 
 OUTPUTS = {
-    "sqrt regression": lambda: fastleaves.Booster.from_lightgbm(train("sqrt regression", "numeric", "default")),
-    "cross_entropy_lambda": lambda: fastleaves.Booster.from_lightgbm(cross_entropy_lambda_model()),
+    "sqrt regression": lambda: fastleaves.from_lightgbm(train("sqrt regression", "numeric", "default")),
+    "cross_entropy_lambda": lambda: fastleaves.from_lightgbm(cross_entropy_lambda_model()),
     "binary sigmoid with more than 22 digits after the decimal point": long_sigmoid_model,
 }
 
@@ -123,7 +123,7 @@ def test_unsupported_output_needs_raw_score(objective):
 
 
 def test_unsupported_option():
-    booster = fastleaves.Booster.from_lightgbm(train("regression", "numeric", "default"))
+    booster = fastleaves.from_lightgbm(train("regression", "numeric", "default"))
     with pytest.raises(UnsupportedError):
         booster.predict(np.zeros((3, 6)), pred_contrib=True)
 
@@ -139,7 +139,7 @@ BAD_INPUTS = {
 
 @pytest.mark.parametrize("data", BAD_INPUTS)
 def test_bad_input(data):
-    booster = fastleaves.Booster.from_lightgbm(train("regression", "numeric", "default"))
+    booster = fastleaves.from_lightgbm(train("regression", "numeric", "default"))
     x, error = BAD_INPUTS[data]
     with pytest.raises(error):
         booster.predict(x)
