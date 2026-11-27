@@ -7,8 +7,7 @@
 //! Four groups of 16 lanes are interleaved to hide gather latency.
 
 use crate::forest::{
-    BLOCK, BLOCK_BITS, CAT, DEFAULT_LEFT, FIRST_MASK, FIRST_SHIFT, LEAF, MISSING, SET_WORDS_BITS, SLOT_MASK,
-    WIDE,
+    BLOCK_BITS, CAT, DEFAULT_LEFT, FIRST_MASK, FIRST_SHIFT, LEAF, MISSING, SET_WORDS_BITS, SLOT_MASK, WIDE,
 };
 use std::arch::x86_64::*;
 
@@ -27,14 +26,14 @@ impl Avx512 {
 
     /// Sets `leaf_of[r]` to the leaf that row `r` of the binned block `bins` reaches. `tree`
     /// must be a packed tree from `Forest` whose root is not a leaf, `sets` that forest's
-    /// category sets, and `bins` must have `BLOCK` bytes for each slot it splits on and 3 bytes
+    /// category sets, and `bins` must have `1 << bits` bytes for each slot it splits on and 3 bytes
     /// after them.
-    pub fn leaves(self, tree: &[u64], sets: &[u32], bins: &[u8], leaf_of: &mut [u32]) {
-        assert!(leaf_of.len() <= BLOCK);
-        // SAFETY: CPU features are checked by `detect`; rows are below `BLOCK` (above); node
-        // indices, slots and set indices are valid by construction of the packed tree, its sets
-        // and its bins; a bin (< 256) picks one of the `SET_WORDS` words of a set.
-        unsafe { leaves(tree, sets, bins, leaf_of) }
+    pub fn leaves(self, tree: &[u64], sets: &[u32], bins: &[u8], bits: u32, leaf_of: &mut [u32]) {
+        assert!(bits <= BLOCK_BITS && leaf_of.len() <= 1 << bits);
+        // SAFETY: CPU features are checked by `detect`; rows are below `1 << bits`, at most
+        // `BLOCK` (above); node indices, slots and set indices are valid by construction of the
+        // packed tree, its sets and its bins; a bin (< 256) picks one of the `SET_WORDS` words of a set.
+        unsafe { leaves(tree, sets, bins, bits, leaf_of) }
     }
 }
 
@@ -48,7 +47,7 @@ struct Lanes {
 }
 
 #[target_feature(enable = "avx512f,bmi2")]
-unsafe fn leaves(tree: &[u64], sets: &[u32], bins: &[u8], leaf_of: &mut [u32]) {
+unsafe fn leaves(tree: &[u64], sets: &[u32], bins: &[u8], bits: u32, leaf_of: &mut [u32]) {
     let root = Lanes {
         lo: _mm512_set1_epi32(tree[0] as i32),
         hi: _mm512_set1_epi32((tree[0] >> 32) as i32),
@@ -56,6 +55,7 @@ unsafe fn leaves(tree: &[u64], sets: &[u32], bins: &[u8], leaf_of: &mut [u32]) {
         active: 0,
     };
     let n = leaf_of.len() as i32;
+    let bits = _mm_cvtsi32_si128(bits as i32);
     let mut next = 0;
     // four groups, stepped in turn to hide gather latency; separate variables keep them in registers
     let [mut a, mut b, mut c, mut d] = [root; 4];
@@ -64,10 +64,10 @@ unsafe fn leaves(tree: &[u64], sets: &[u32], bins: &[u8], leaf_of: &mut [u32]) {
             g.refill(&root, 0xFFFF, n, &mut next);
         }
         while (a.active | b.active | c.active | d.active) != 0 {
-            a.step(&root, tree, sets, bins, leaf_of, n, &mut next);
-            b.step(&root, tree, sets, bins, leaf_of, n, &mut next);
-            c.step(&root, tree, sets, bins, leaf_of, n, &mut next);
-            d.step(&root, tree, sets, bins, leaf_of, n, &mut next);
+            a.step(&root, tree, sets, bins, bits, leaf_of, n, &mut next);
+            b.step(&root, tree, sets, bins, bits, leaf_of, n, &mut next);
+            c.step(&root, tree, sets, bins, bits, leaf_of, n, &mut next);
+            d.step(&root, tree, sets, bins, bits, leaf_of, n, &mut next);
         }
     }
 }
@@ -82,6 +82,7 @@ impl Lanes {
         tree: &[u64],
         sets: &[u32],
         bins: &[u8],
+        bits: __m128i,
         leaf_of: &mut [u32],
         n: i32,
         next: &mut i32,
@@ -99,7 +100,7 @@ impl Lanes {
             // WIDE: bit `bin % 32` of word `bin / 32` of set number `hi` in `sets`.
             let slot = _mm512_and_si512(self.lo, set(SLOT_MASK));
             let first = _mm512_and_si512(_mm512_srli_epi32::<FIRST_SHIFT>(self.lo), set(FIRST_MASK));
-            let at = _mm512_add_epi32(_mm512_slli_epi32::<BLOCK_BITS>(slot), self.row);
+            let at = _mm512_add_epi32(_mm512_sll_epi32(slot, bits), self.row);
             let d = _mm512_mask_i32gather_epi32::<1>(zero, act, at, bins.as_ptr().cast());
             let d = _mm512_and_si512(d, set(0xFF));
             let cat = _mm512_test_epi32_mask(self.lo, set(CAT));

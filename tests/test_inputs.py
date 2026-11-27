@@ -120,6 +120,15 @@ def test_thread_counts(threads, pred_leaf):
     check(train(*MODEL), rows(10_000), num_threads=threads, pred_leaf=pred_leaf)
 
 
+@PRED_LEAF
+@pytest.mark.parametrize("threads", [2, 3, 64])
+@pytest.mark.parametrize("n", [4097, 8191, 8193, 20_000])
+def test_rows_split_among_threads(n, threads, pred_leaf):
+    """More than 4,096 rows are split into equal blocks, a multiple of the thread count, of 256
+    to 4,096 rows (on 64 threads: blocks of 256 rows and a last one of a single row)."""
+    check(train(*MODEL), rows(n), num_threads=threads, pred_leaf=pred_leaf)
+
+
 def test_concurrent_calls():
     """Calls from several Python threads at once share fastleaves' thread pools."""
     model = train(*MODEL)

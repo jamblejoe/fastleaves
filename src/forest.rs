@@ -11,8 +11,9 @@
 //! numerical splits. A categorical split never has bit 255 set, so `NO_CAT` goes right.
 //!
 //! The columns the model splits on get slots 0, 1, ... in column order; columns it never
-//! splits on are not read. Bins are stored per block of `BLOCK` rows, slot by slot: the bin of
-//! slot `s` and row `r` is at `s * BLOCK + r`, so a tree reads only the slots it splits on.
+//! splits on are not read. Bins are stored per block of at most `BLOCK` rows, slot by slot: the bin
+//! of slot `s` and row `r` is at `(s << bits) + r`, where `1 << bits` is the block's rows rounded up
+//! to a power of two, so a tree reads only the slots it splits on.
 //!
 //! Each node is one `u64`. Low half: slot (bits 0..8), index of the first child (8..24), flags
 //! `WIDE`, `CAT`, `LEAF`, `DEFAULT_LEFT`. High half: the threshold bin of a numerical split, the
@@ -44,8 +45,9 @@ pub(crate) const LEAF: u32 = 1 << 29;
 pub(crate) const DEFAULT_LEFT: u32 = 1 << 30;
 pub(crate) const MISSING: u8 = 255; // numerical splits
 const NO_CAT: u8 = 255; // categorical splits
-pub(crate) const BLOCK: usize = 1 << BLOCK_BITS; // rows per block
+pub(crate) const BLOCK: usize = 1 << BLOCK_BITS; // most rows per block
 pub(crate) const BLOCK_BITS: u32 = 12;
+const MIN_BLOCK: usize = 256; // fewest rows per block when rows are split among threads
 const ZERO: f64 = 1e-35f32 as f64; // LightGBM reads inputs within ±ZERO as 0
 
 /// Which numerical values count as missing (LightGBM's `MissingType`).
@@ -250,21 +252,21 @@ impl Forest {
         Ok(())
     }
 
-    /// The bins of the rows of `x` (at most `BLOCK`), slot by slot; 3 bytes of padding at the
-    /// end, as SIMD reads 4 bytes.
-    fn bin_block(&self, x: &[f64]) -> Vec<u8> {
-        let mut bins = vec![0u8; self.slots.len() * BLOCK + 3];
+    /// Writes to `bins` the bins of the rows of `x` (at most `1 << bits`), slot by slot,
+    /// `1 << bits` bytes per slot; 3 bytes of padding at the end, as SIMD reads 4 bytes. Bytes
+    /// after a slot's rows keep what `bins` held: the kernels read only the rows of `x`.
+    fn bin_block(&self, x: &[f64], bits: u32, bins: &mut Vec<u8>) {
+        bins.resize((self.slots.len() << bits) + 3, 0);
         for (r, row) in x.chunks(self.n_features.max(1)).enumerate() {
             for (s, (feature, &c)) in self.slots.iter().zip(&self.columns).enumerate() {
-                bins[s * BLOCK + r] = bin(feature, row[c]);
+                bins[(s << bits) + r] = bin(feature, row[c]);
             }
         }
-        bins
     }
 
     /// Raw score of each row of the row-major matrix `x`: the sum of the leaf values of
     /// `trees`, added in tree order as LightGBM does. Runs on rayon's current thread pool, or on the
-    /// calling thread if `x` fits in one block.
+    /// calling thread if `x` has at most `BLOCK` rows.
     pub fn predict_raw(&self, x: &[f64], out: &mut [f64], trees: Range<usize>) {
         out.fill(0.0);
         self.for_each_tree(x, out, 1, trees, |acc, _, root, leaf_of| {
@@ -275,7 +277,7 @@ impl Forest {
 
     /// LightGBM's index of the leaf each row of `x` reaches in each of `trees`: row-major,
     /// `trees.len()` per row. Runs on rayon's current thread pool, or on the calling thread if `x`
-    /// fits in one block.
+    /// has at most `BLOCK` rows.
     pub fn predict_leaf(&self, x: &[f64], out: &mut [i32], trees: Range<usize>) {
         let width = trees.len();
         if width == 0 {
@@ -306,30 +308,50 @@ impl Forest {
             "x must have one row of {nf} features per {width} outputs"
         );
         let simd = Avx512::detect();
-        let block = |(out, x): (&mut [T], &[f64])| {
+        let rows = out.len() / width;
+        let block_rows = block_rows(rows, rayon::current_num_threads());
+        let bits = block_rows.next_power_of_two().trailing_zeros();
+        // `bins` and `leaf_of` are reused from block to block, so each thread allocates them once
+        let block = |(bins, leaf_of): &mut (Vec<u8>, Vec<u32>), (out, x): (&mut [T], &[f64])| {
             let n = out.len() / width;
-            let bins = self.bin_block(x);
-            let mut leaf_of = vec![0u32; n];
+            self.bin_block(x, bits, bins);
+            leaf_of.resize(n, 0); // every row's leaf is written for each tree below
             for (k, &root) in self.roots[trees.clone()].iter().enumerate() {
                 let tree = &self.nodes[root..];
                 if is_leaf(tree[0]) {
                     leaf_of.fill(0);
                 } else if let Some(s) = simd {
-                    s.leaves(tree, &self.sets, &bins, &mut leaf_of);
+                    s.leaves(tree, &self.sets, bins, bits, leaf_of);
                 } else {
                     for (r, l) in leaf_of.iter_mut().enumerate() {
-                        *l = leaf_scalar(tree, &self.sets, &bins, r);
+                        *l = leaf_scalar(tree, &self.sets, bins, bits, r);
                     }
                 }
-                f(out, k, root, &leaf_of);
+                f(out, k, root, leaf_of);
             }
         };
-        match out.len() {
+        match rows {
             0 => {}
-            n if n <= BLOCK * width => block((out, x)), // one block: on the calling thread
-            _ => out.par_chunks_mut(BLOCK * width).zip(x.par_chunks(BLOCK * nf.max(1))).for_each(block),
+            n if n <= BLOCK => block(&mut Default::default(), (out, x)), // one block: on the calling thread
+            _ => out
+                .par_chunks_mut(block_rows * width)
+                .zip(x.par_chunks(block_rows * nf.max(1)))
+                .for_each_init(Default::default, block),
         }
     }
+}
+
+/// Rows per block for `rows` rows on `threads` threads. Up to `BLOCK` rows: one block. More:
+/// blocks of equal size, at most `BLOCK` rows, as few as possible but a multiple of `threads`, so
+/// that every thread gets the same work; at least `MIN_BLOCK` rows, as smaller blocks cost more
+/// per row than another thread saves.
+fn block_rows(rows: usize, threads: usize) -> usize {
+    if rows <= BLOCK {
+        return rows.max(1);
+    }
+    let threads = threads.max(1);
+    let blocks = rows.div_ceil(BLOCK * threads) * threads;
+    rows.div_ceil(blocks).max(MIN_BLOCK)
 }
 
 fn is_leaf(node: u64) -> bool {
@@ -358,16 +380,16 @@ fn bin(feature: &Feature, v: f64) -> u8 {
     }
 }
 
-/// The node (counted from the root of `tree`) of the leaf that row `r` of the binned block reaches;
-/// `sets` holds the category sets of `WIDE` splits.
-fn leaf_scalar(tree: &[u64], sets: &[u32], bins: &[u8], r: usize) -> u32 {
+/// The node (counted from the root of `tree`) of the leaf that row `r` of the binned block reaches
+/// (`1 << bits` bins per slot); `sets` holds the category sets of `WIDE` splits.
+fn leaf_scalar(tree: &[u64], sets: &[u32], bins: &[u8], bits: u32, r: usize) -> u32 {
     let mut n = 0;
     loop {
         let (lo, hi) = (tree[n] as u32, (tree[n] >> 32) as u32);
         if lo & LEAF != 0 {
             return n as u32;
         }
-        let d = bins[(lo & SLOT_MASK) as usize * BLOCK + r];
+        let d = bins[(((lo & SLOT_MASK) as usize) << bits) + r];
         let left = if lo & WIDE != 0 {
             sets[hi as usize * SET_WORDS + d as usize / 32] >> (d % 32) & 1 == 1
         } else if lo & CAT != 0 {
@@ -535,37 +557,60 @@ mod tests {
             used.truncate(MAX_FEATURES);
             let trees: Vec<Node> = (0..30).map(|_| tree(&mut rng, 12, &kinds, &used)).collect();
             let forest = Forest::new(nf, &trees).unwrap();
-            for n in [0, 1, 15, 16, 17, 100, BLOCK + 5] {
+            // more than `BLOCK` rows: blocks of `MIN_BLOCK` to `BLOCK` rows, depending on the threads
+            let pool = |threads| rayon::ThreadPoolBuilder::new().num_threads(threads).build().unwrap();
+            let pools = [pool(1), pool(3), pool(40)];
+            for n in [0, 1, 15, 16, 17, 100, BLOCK + 5, 3 * BLOCK + 1] {
                 let x: Vec<f64> = (0..n * nf).map(|_| rng.value()).collect();
-                let mut out = vec![f64::NAN; n];
-                forest.predict_raw(&x, &mut out, 3..trees.len());
-                for (row, &got) in x.chunks(nf).zip(&out) {
-                    let want = trees[3..].iter().fold(0.0, |s, t| s + eval(t, row).0);
-                    assert_eq!(got.to_bits(), want.to_bits());
+                for pool in &pools[..if n > BLOCK { 3 } else { 1 }] {
+                    let mut out = vec![f64::NAN; n];
+                    pool.install(|| forest.predict_raw(&x, &mut out, 3..trees.len()));
+                    for (row, &got) in x.chunks(nf).zip(&out) {
+                        let want = trees[3..].iter().fold(0.0, |s, t| s + eval(t, row).0);
+                        assert_eq!(got.to_bits(), want.to_bits());
+                    }
+                    let mut leaf = vec![-1; n * 7];
+                    pool.install(|| forest.predict_leaf(&x, &mut leaf, 5..12));
+                    for (row, got) in x.chunks(nf).zip(leaf.chunks(7)) {
+                        let want: Vec<i32> = trees[5..12].iter().map(|t| eval(t, row).1 as i32).collect();
+                        assert_eq!(got, want);
+                    }
                 }
-                let mut leaf = vec![-1; n * 7];
-                forest.predict_leaf(&x, &mut leaf, 5..12);
-                for (row, got) in x.chunks(nf).zip(leaf.chunks(7)) {
-                    let want: Vec<i32> = trees[5..12].iter().map(|t| eval(t, row).1 as i32).collect();
-                    assert_eq!(got, want);
-                }
-                // both kernels pick the same leaves
+                // both kernels pick the same leaves, for each power-of-two block stride that fits
                 let Some(simd) = Avx512::detect() else { continue };
                 let rows = n.min(BLOCK);
-                let bins = forest.bin_block(&x[..rows * nf]);
-                for &root in &forest.roots {
-                    let tree = &forest.nodes[root..];
-                    if is_leaf(tree[0]) {
-                        continue;
+                let fits = rows.next_power_of_two().trailing_zeros();
+                let mut bins = vec![0xAB; 5]; // reused, as by `for_each_tree`: bytes of earlier strides stay
+                for bits in [BLOCK_BITS, fits + 1, fits] {
+                    let bits = bits.min(BLOCK_BITS);
+                    forest.bin_block(&x[..rows * nf], bits, &mut bins);
+                    for &root in &forest.roots {
+                        let tree = &forest.nodes[root..];
+                        if is_leaf(tree[0]) {
+                            continue;
+                        }
+                        let mut got = vec![0; rows];
+                        simd.leaves(tree, &forest.sets, &bins, bits, &mut got);
+                        let want: Vec<u32> =
+                            (0..rows).map(|r| leaf_scalar(tree, &forest.sets, &bins, bits, r)).collect();
+                        assert_eq!(got, want);
                     }
-                    let mut got = vec![0; rows];
-                    simd.leaves(tree, &forest.sets, &bins, &mut got);
-                    let want: Vec<u32> =
-                        (0..rows).map(|r| leaf_scalar(tree, &forest.sets, &bins, r)).collect();
-                    assert_eq!(got, want);
                 }
             }
         }
+    }
+
+    #[test]
+    fn block_rows_split_rows_evenly_among_threads() {
+        assert_eq!(block_rows(0, 4), 1);
+        assert_eq!(block_rows(BLOCK, 4), BLOCK); // one block, on the calling thread
+        assert_eq!(block_rows(BLOCK + 1, 1), BLOCK / 2 + 1); // two blocks, 2049 and 2048 rows
+        assert_eq!(block_rows(8192, 4), 2048);
+        assert_eq!(block_rows(20_000, 4), 2500); // 8 blocks, not 4 full ones and a short one
+        assert_eq!(block_rows(1 << 20, 4), BLOCK);
+        assert_eq!(block_rows(1 << 20, 3), 4065); // 258 blocks
+        assert_eq!(block_rows(8192, 64), MIN_BLOCK);
+        assert_eq!(block_rows(10_000, 0), 3334); // 0 threads: as 1
     }
 
     #[test]
