@@ -8,9 +8,9 @@ permissions:
   contents: read
 
 jobs:
-  # A pull request that changes only documentation (*.md, LICENSE) skips the build and the
-  # tests below. The jobs still run and pass, so the required checks report; a skipped job
-  # would not. Pushes to main always test.
+  # A pull request that changes only documentation (*.md, LICENSE) skips the jobs test and
+  # avx512. The ruleset requires only ci-ok, which passes when they pass or are skipped.
+  # Pushes to main always test.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -28,6 +28,7 @@ jobs:
 
   test:
     needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -37,48 +38,46 @@ jobs:
       run:
         shell: bash
     steps:
-      - if: needs.changes.outputs.docs_only == 'true'
-        run: echo "Only documentation changed; build and tests skipped."
       - uses: actions/checkout@v4
-        if: needs.changes.outputs.docs_only != 'true'
       - uses: actions/setup-python@v5
-        if: needs.changes.outputs.docs_only != 'true'
         with:
           python-version: ${{ matrix.python }}
       - run: cargo test --release
-        if: needs.changes.outputs.docs_only != 'true'
       - run: FASTLEAVES_ISA=scalar cargo test --release
-        if: needs.changes.outputs.docs_only != 'true'
       - run: pip install ".[test]"
-        if: needs.changes.outputs.docs_only != 'true'
       - name: pytest (fast path if the CPU has AVX-512, see the report header)
-        if: needs.changes.outputs.docs_only != 'true'
         run: pytest
       - name: pytest (scalar path)
-        if: needs.changes.outputs.docs_only != 'true'
         run: FASTLEAVES_ISA=scalar pytest
 
   # GitHub's runners may lack AVX-512, so the fast kernel runs on Intel's emulator.
   # Only the test binaries are emulated; the full pytest suite runs there nightly.
   avx512:
     needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     env:
       # `-skx`: Intel SDE emulates Skylake-X, the oldest CPU with AVX-512F and BMI2
       FASTLEAVES_REQUIRE_AVX512: "1"
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: sde64 -skx --
     steps:
-      - if: needs.changes.outputs.docs_only == 'true'
-        run: echo "Only documentation changed; build and tests skipped."
       - uses: actions/checkout@v4
-        if: needs.changes.outputs.docs_only != 'true'
       - name: Intel SDE (AVX-512 emulator)
-        if: needs.changes.outputs.docs_only != 'true'
         uses: petarpetrovt/setup-sde@6d2773bc0ef3005fd52e0ae0bb91782321793aec # v6.0
         with:
           environmentVariableName: SDE_PATH
           sdeVersion: 10.13.1
       - run: echo "$SDE_PATH" >> "$GITHUB_PATH"
-        if: needs.changes.outputs.docs_only != 'true'
       - run: cargo test --release
-        if: needs.changes.outputs.docs_only != 'true'
+
+  # The one required check: fails if any job above failed or was cancelled.
+  ci-ok:
+    if: always()
+    needs: [changes, test, avx512]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for r in $RESULTS; do case "$r" in success|skipped) ;; *) exit 1 ;; esac; done
