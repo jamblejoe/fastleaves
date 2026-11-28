@@ -6,6 +6,8 @@ All notable changes to fastleaves. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-28
+
 - Calls with more than 4,096 rows split them evenly among all threads, in blocks of 256 to
   4,096 rows. Before, threads took whole blocks of 4,096 rows, so 8,192 rows used only 2 threads.
 - `fastleaves.from_sklearn(model)` copies a fitted scikit-learn model of LightGBM. An
