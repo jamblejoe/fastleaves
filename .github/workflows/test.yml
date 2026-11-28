@@ -24,7 +24,7 @@ jobs:
         if: github.event_name == 'pull_request'
         run: |
           git diff --name-only HEAD^1 HEAD | tee changed
-          if grep -v -E '(\.md|^LICENSE)$' changed; then echo docs_only=false; else echo docs_only=true; fi >> "$GITHUB_OUTPUT"
+          if grep -q -v -E '(\.md|^LICENSE)$' changed; then echo docs_only=false; else echo docs_only=true; fi >> "$GITHUB_OUTPUT"
 
   test:
     needs: changes
