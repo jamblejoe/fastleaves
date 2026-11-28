@@ -25,6 +25,10 @@ installed by `petarpetrovt/setup-sde`): the kernel tests on every push, the whol
 (`.github/workflows/nightly.yml`). The release workflow runs the whole suite on both paths against the
 installed wheel, on Linux and Windows (the emulated run on Linux only). `FASTLEAVES_REQUIRE_AVX512=1` makes both suites fail if the
 fast kernel is not used.
+A pull request that changes only documentation (`*.md`, `LICENSE`) skips the jobs `test`
+and `avx512` in `.github/workflows/test.yml`. The only required check is `ci-ok`, which
+passes when those jobs pass or are skipped and fails otherwise. Pushes to `main`, the
+nightly runs and the release workflow always test.
 
 A mutation test (`.github/workflows/mutants.yml`) checks the tests themselves: nightly for
 all the Rust code, and on pull requests for the lines they change. cargo-mutants changes

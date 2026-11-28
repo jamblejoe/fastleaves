@@ -8,7 +8,27 @@ permissions:
   contents: read
 
 jobs:
+  # A pull request that changes only documentation (*.md, LICENSE) skips the jobs test and
+  # avx512. The ruleset requires only ci-ok, which passes when they pass or are skipped.
+  # Pushes to main always test.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2 # the merge commit and its first parent, the base branch
+      - id: diff
+        if: github.event_name == 'pull_request'
+        run: |
+          git diff --name-only HEAD^1 HEAD | tee changed
+          if grep -q -v -E '(\.md|^LICENSE)$' changed; then echo docs_only=false; else echo docs_only=true; fi >> "$GITHUB_OUTPUT"
+
   test:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -33,6 +53,8 @@ jobs:
   # GitHub's runners may lack AVX-512, so the fast kernel runs on Intel's emulator.
   # Only the test binaries are emulated; the full pytest suite runs there nightly.
   avx512:
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     env:
       # `-skx`: Intel SDE emulates Skylake-X, the oldest CPU with AVX-512F and BMI2
@@ -47,3 +69,15 @@ jobs:
           sdeVersion: 10.13.1
       - run: echo "$SDE_PATH" >> "$GITHUB_PATH"
       - run: cargo test --release
+
+  # The one required check: fails if any job above failed or was cancelled.
+  ci-ok:
+    if: always()
+    needs: [changes, test, avx512]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for r in $RESULTS; do case "$r" in success|skipped) ;; *) exit 1 ;; esac; done
